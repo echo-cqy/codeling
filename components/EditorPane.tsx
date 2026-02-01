@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { geminiService } from '../services/geminiService';
 import { storageService } from '../services/storageService';
 import { playgroundService } from '../services/playgroundService';
 import { Framework, Attempt, Language, Question } from '../types';
@@ -17,76 +16,146 @@ interface EditorPaneProps {
 declare const require: any;
 declare const monaco: any;
 
-const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSave, onQuestionUpdate }) => {
+const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSave }) => {
   const t = translations[lang];
-  const [hint, setHint] = useState<string | null>(null);
-  const [loadingHint, setLoadingHint] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSaveNaming, setShowSaveNaming] = useState(false);
-  const [showEditMeta, setShowEditMeta] = useState(false);
   const [versionName, setVersionName] = useState('');
   const [history, setHistory] = useState<Attempt[]>([]);
-  
-  // Local state for editing question
-  const [editTitle, setEditTitle] = useState(question.title);
-  const [editDesc, setEditDesc] = useState(question.description);
-  const [editSolution, setEditSolution] = useState(question[framework].solution);
+
+  // Layout States
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [layoutMode, setLayoutMode] = useState<'both' | 'editor' | 'preview'>('both');
+  const [isResizing, setIsResizing] = useState(false);
 
   const editorRef = useRef<any>(null);
   const monacoContainerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const initialCode = storageService.getLatestCode(question.id, framework) || question[framework].initial;
 
+  // Monaco Initialization & Configuration
   useEffect(() => {
     if (!monacoContainerRef.current) return;
+    
     require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
     require(['vs/editor/editor.main'], () => {
+      // --- 配置 React/JSX 支持 ---
+      // 1. 设置编译器选项，启用 JSX 和 ESNext
+      monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+        target: monaco.languages.typescript.ScriptTarget.ESNext,
+        allowNonTsExtensions: true,
+        jsx: monaco.languages.typescript.JsxEmit.React,
+        jsxFactory: 'React.createElement',
+        reactNamespace: 'React',
+        allowJs: true,
+        typeRoots: ["node_modules/@types"]
+      });
+
+      // 2. 注入模拟的 React 类型定义，消除 className 等属性报错
+      const reactLibContent = `
+        declare namespace React {
+          function useState<T>(initialState: T | (() => T)): [T, (newState: T | ((prevState: T) => T)) => void];
+          function useEffect(effect: () => void | (() => void), deps?: ReadonlyArray<any>): void;
+          function useMemo<T>(factory: () => T, deps: ReadonlyArray<any> | undefined): T;
+          function useCallback<T extends (...args: any[]) => any>(callback: T, deps: ReadonlyArray<any>): T;
+          function useRef<T>(initialValue: T): { current: T };
+          interface ReactElement<P = any, T = any> { type: T; props: P; key: string | null; }
+          interface DOMAttributes<T> { children?: any; onClick?: any; className?: string; style?: any; }
+          interface HTMLAttributes<T> extends DOMAttributes<T> { [prop: string]: any; }
+        }
+        declare namespace JSX {
+          interface IntrinsicElements { [elemName: string]: any; }
+        }
+      `;
+      
+      // 仅添加一次
+      const libUri = "ts:filename/react.d.ts";
+      if (!monaco.languages.typescript.javascriptDefaults.getExtraLibs()[libUri]) {
+        monaco.languages.typescript.javascriptDefaults.addExtraLib(reactLibContent, libUri);
+      }
+
+      // 3. 配置诊断选项
+      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false, // 开启语义验证以提供更好的提示
+        noSyntaxValidation: false,
+        // 忽略某些不必要的错误代码 (例如: 'React' refers to a UMD global)
+        diagnosticCodesToIgnore: [2686, 1108] 
+      });
+
       if (!editorRef.current) {
         editorRef.current = monaco.editor.create(monacoContainerRef.current, {
           value: initialCode,
           language: framework === 'vue' ? 'html' : 'javascript',
           theme: 'vs',
           fontSize: 14,
-          fontFamily: 'Fira Code',
+          fontFamily: "'Fira Code', monospace",
           minimap: { enabled: false },
           automaticLayout: true,
-          padding: { top: 16 },
+          padding: { top: 20, bottom: 20 },
           tabSize: 2,
-          wordWrap: 'on'
+          wordWrap: 'on',
+          scrollBeyondLastLine: false,
+          fixedOverflowWidgets: true,
+          lineNumbers: 'on',
+          roundedSelection: true,
+          scrollbar: {
+            verticalScrollbarSize: 8,
+            horizontalScrollbarSize: 8,
+          }
         });
-        editorRef.current.onDidChangeModelContent(() => debouncedUpdatePreview());
+
+        editorRef.current.onDidChangeModelContent(() => {
+          debouncedUpdatePreview();
+        });
       } else {
         editorRef.current.setValue(initialCode);
+        const langId = framework === 'vue' ? 'html' : 'javascript';
+        monaco.editor.setModelLanguage(editorRef.current.getModel(), langId);
       }
       updatePreview(initialCode);
     });
   }, [question.id, framework]);
 
+  // Resizing Logic
   useEffect(() => {
-    if (editorRef.current) {
-      const model = editorRef.current.getModel();
-      monaco.editor.setModelLanguage(model, framework === 'vue' ? 'html' : 'javascript');
-      setHistory(storageService.getHistoryByQuestion(question.id, framework));
-      
-      // Sync edit inputs
-      setEditTitle(question.title);
-      setEditDesc(question.description);
-      setEditSolution(question[framework].solution);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const offset = e.clientX - rect.left;
+      const percentage = (offset / rect.width) * 100;
+      if (percentage > 10 && percentage < 90) {
+        setSplitRatio(percentage);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
     }
-  }, [question.id, framework, initialCode]);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
 
   const updatePreview = (codeToRun?: string) => {
     const code = codeToRun || (editorRef.current?.getValue() || initialCode);
     if (!iframeRef.current) return;
-    
     const htmlContent = playgroundService.generateHtml(code, framework);
-    iframeRef.current.src = URL.createObjectURL(new Blob([htmlContent], { type: 'text/html' }));
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    iframeRef.current.src = URL.createObjectURL(blob);
   };
 
   const debouncedUpdatePreview = (() => {
-    let t_ref: any; return () => { clearTimeout(t_ref); t_ref = setTimeout(() => updatePreview(), 800); };
+    let t_ref: any;
+    return () => {
+      clearTimeout(t_ref);
+      t_ref = setTimeout(() => updatePreview(), 400); // 缩短延迟
+    };
   })();
 
   const handleSaveAttempt = () => {
@@ -97,162 +166,111 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     setHistory(storageService.getHistoryByQuestion(question.id, framework));
   };
 
-  const handleHintRequest = async () => {
-    setLoadingHint(true);
-    const h = await geminiService.getHint(question.description, editorRef.current.getValue(), lang);
-    setHint(h);
-    setLoadingHint(false);
-  };
-
-  const handleQuestionUpdateSubmit = () => {
-    onQuestionUpdate({
-      title: editTitle,
-      description: editDesc,
-      [framework]: {
-        ...question[framework],
-        solution: editSolution
-      }
-    });
-    setShowEditMeta(false);
-  };
-
   return (
-    <div className="flex flex-col h-full bg-white rounded-[2.5rem] shadow-sm border border-pink-100 overflow-hidden">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-pink-50">
-        <div className="flex gap-2">
-          <button onClick={() => setShowSaveNaming(true)} className="px-5 py-2 bg-pink-400 text-white rounded-2xl text-xs font-black hover:bg-pink-500 transition shadow-sm">{t.save}</button>
-          <button onClick={() => setShowHistory(!showHistory)} className="px-5 py-2 bg-pink-50 text-pink-400 rounded-2xl text-xs font-black hover:bg-pink-100 transition">{t.history}</button>
+    <div className="flex flex-col h-full bg-white rounded-[2rem] shadow-2xl border border-pink-100 overflow-hidden relative">
+      {/* 工具栏 */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-pink-50 bg-white z-10 shrink-0">
+        <div className="flex gap-3">
+          <button onClick={() => setShowSaveNaming(true)} className="px-5 py-2 bg-pink-400 text-white rounded-xl text-xs font-black hover:bg-pink-500 transition shadow-lg shadow-pink-100 active:scale-95">{t.save}</button>
+          <button onClick={() => { setHistory(storageService.getHistoryByQuestion(question.id, framework)); setShowHistory(!showHistory); }} className="px-5 py-2 bg-pink-50 text-pink-400 rounded-xl text-xs font-black hover:bg-pink-100 transition active:scale-95">{t.history}</button>
         </div>
-        <div className="flex gap-2 items-center">
-          <button onClick={handleHintRequest} className="text-xs font-black text-pink-300 hover:text-pink-500">{loadingHint ? t.thinking : `💡 ${t.hint}`}</button>
-          <button onClick={() => setShowSolution(!showSolution)} className="text-xs font-black text-gray-400 hover:text-gray-600 ml-4">{showSolution ? t.hideSolution : t.solution}</button>
-          <button onClick={() => setShowEditMeta(true)} className="w-8 h-8 flex items-center justify-center bg-gray-50 text-gray-400 rounded-full hover:bg-pink-50 hover:text-pink-400 transition ml-2">✎</button>
+        
+        <div className="flex gap-4 items-center">
+          <div className="flex bg-gray-100/50 p-1.5 rounded-2xl mr-2 border border-gray-100">
+            <button onClick={() => setLayoutMode('editor')} className={`p-1.5 rounded-xl transition ${layoutMode === 'editor' ? 'bg-white text-pink-400 shadow-sm scale-110' : 'text-gray-300 hover:text-gray-400'}`} title="Code Only">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+            </button>
+            <button onClick={() => setLayoutMode('both')} className={`p-1.5 rounded-xl transition ${layoutMode === 'both' ? 'bg-white text-pink-400 shadow-sm scale-110' : 'text-gray-300 hover:text-gray-400'}`} title="Split View">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" /></svg>
+            </button>
+            <button onClick={() => setLayoutMode('preview')} className={`p-1.5 rounded-xl transition ${layoutMode === 'preview' ? 'bg-white text-pink-400 shadow-sm scale-110' : 'text-gray-300 hover:text-gray-400'}`} title="Preview Only">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+            </button>
+          </div>
+          <button onClick={() => setShowSolution(!showSolution)} className="text-[11px] font-black text-gray-400 hover:text-pink-500 transition uppercase tracking-widest">{showSolution ? t.hideSolution : t.solution}</button>
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        <div className="w-1/2 h-full border-r border-pink-50" ref={monacoContainerRef} />
-        <div className="w-1/2 h-full bg-[#fffcfd] relative">
-           <iframe ref={iframeRef} className="w-full h-full border-none" title="Preview" />
+      {/* 主工作区 - 占据 100% 剩余空间 */}
+      <div className="flex-1 flex overflow-hidden min-h-0 relative" ref={containerRef}>
+        {/* 编辑器 */}
+        <div 
+          className={`h-full overflow-hidden transition-[width] duration-75 ${layoutMode === 'preview' ? 'w-0 hidden' : ''}`} 
+          style={{ width: layoutMode === 'both' ? `${splitRatio}%` : '100%' }}
+        >
+          <div ref={monacoContainerRef} className="w-full h-full" />
         </div>
 
-        {/* History Overlay */}
-        {showHistory && (
-          <div className="absolute top-0 right-0 w-80 h-full bg-white/95 backdrop-blur-md shadow-2xl z-20 p-6 overflow-y-auto animate-slide-left border-l border-pink-50">
-             <div className="flex items-center justify-between mb-6">
-                <h4 className="font-black text-gray-800">{t.pastVersions}</h4>
-                <button onClick={() => setShowHistory(false)} className="text-gray-400 p-2">✕</button>
-             </div>
-             <div className="space-y-3">
-                {history.length === 0 && <p className="text-xs text-gray-400 italic text-center py-8">{t.noHistory}</p>}
-                {history.map(h => (
-                  <button key={h.id} onClick={() => { editorRef.current?.setValue(h.code); setShowHistory(false); }} className="w-full text-left p-4 rounded-3xl bg-gray-50 hover:bg-pink-50 transition border border-transparent hover:border-pink-200 group">
-                    <div className="flex justify-between items-start mb-1">
-                      <div className="text-[10px] font-black text-pink-300 group-hover:text-pink-400">{new Date(h.timestamp).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')}</div>
-                      {h.name && <div className="text-[9px] px-2 py-0.5 bg-pink-100 text-pink-600 rounded-full font-black uppercase tracking-tighter">{h.name}</div>}
-                    </div>
-                    <div className="text-[10px] text-gray-400 font-mono truncate bg-white/50 p-1.5 rounded-lg border border-gray-100">{h.code.substring(0, 60)}...</div>
-                  </button>
-                ))}
-             </div>
-          </div>
-        )}
-
-        {/* Save Naming Dialog */}
-        {showSaveNaming && (
-          <div className="absolute inset-0 bg-pink-900/10 backdrop-blur-md z-30 flex items-center justify-center animate-fade-in p-6">
-             <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl border border-pink-100 max-w-sm w-full">
-                <div className="flex flex-col items-center mb-6">
-                  <div className="w-16 h-16 bg-pink-50 text-pink-400 rounded-3xl flex items-center justify-center text-3xl mb-4">💾</div>
-                  <h3 className="text-xl font-black text-gray-800">{t.save}</h3>
-                </div>
-                <label className="block text-[10px] font-black text-pink-300 uppercase tracking-widest mb-2 px-1">{t.versionName}</label>
-                <input 
-                  autoFocus
-                  value={versionName}
-                  onChange={e => setVersionName(e.target.value)}
-                  placeholder={t.placeholderVersion}
-                  className="w-full bg-pink-50/30 border-2 border-pink-50 rounded-2xl px-5 py-4 text-sm mb-6 focus:ring-4 ring-pink-100 focus:border-pink-200 outline-none transition-all"
-                  onKeyDown={e => e.key === 'Enter' && handleSaveAttempt()}
-                />
-                <div className="flex gap-3">
-                   <button onClick={handleSaveAttempt} className="flex-1 py-4 bg-pink-400 text-white rounded-2xl font-black text-sm shadow-xl shadow-pink-200/50 hover:bg-pink-500 transition-colors">{t.save}</button>
-                   <button onClick={() => setShowSaveNaming(false)} className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black text-sm hover:bg-gray-200 transition-colors">{t.close}</button>
-                </div>
-             </div>
-          </div>
-        )}
-
-        {/* Edit Question Dialog */}
-        {showEditMeta && (
-          <div className="absolute inset-0 bg-white z-40 p-12 overflow-y-auto animate-fade-in custom-scrollbar">
-             <div className="max-w-3xl mx-auto">
-                <div className="flex justify-between items-center mb-10">
-                   <div>
-                      <h3 className="text-3xl font-black text-gray-800 tracking-tight">{t.editQuestion}</h3>
-                      <p className="text-gray-400 text-sm mt-1">Review and refine the challenge details.</p>
-                   </div>
-                   <button onClick={() => setShowEditMeta(false)} className="w-10 h-10 flex items-center justify-center bg-gray-50 text-gray-400 rounded-full hover:bg-pink-50 hover:text-pink-400 transition">✕</button>
-                </div>
-                
-                <div className="space-y-8">
-                   <div>
-                      <label className="text-[10px] font-black text-pink-300 uppercase tracking-widest block mb-2 px-1">Title</label>
-                      <input 
-                        value={editTitle}
-                        onChange={e => setEditTitle(e.target.value)}
-                        className="w-full bg-gray-50/50 border-2 border-gray-100 rounded-3xl px-6 py-4 text-sm font-bold focus:ring-4 ring-pink-50 focus:border-pink-200 outline-none transition-all"
-                      />
-                   </div>
-                   <div>
-                      <label className="text-[10px] font-black text-pink-300 uppercase tracking-widest block mb-2 px-1">Description</label>
-                      <textarea 
-                        rows={5}
-                        value={editDesc}
-                        onChange={e => setEditDesc(e.target.value)}
-                        className="w-full bg-gray-50/50 border-2 border-gray-100 rounded-3xl px-6 py-4 text-sm font-medium focus:ring-4 ring-pink-50 focus:border-pink-200 outline-none resize-none transition-all"
-                      />
-                   </div>
-                   <div>
-                      <label className="text-[10px] font-black text-pink-300 uppercase tracking-widest block mb-2 px-1">Answer Solution ({framework.toUpperCase()})</label>
-                      <textarea 
-                        rows={12}
-                        value={editSolution}
-                        onChange={e => setEditSolution(e.target.value)}
-                        className="w-full bg-gray-50/50 border-2 border-gray-100 rounded-3xl px-6 py-4 text-xs font-mono focus:ring-4 ring-pink-50 focus:border-pink-200 outline-none resize-none transition-all"
-                      />
-                   </div>
-                   <div className="pt-6 flex gap-4">
-                      <button onClick={handleQuestionUpdateSubmit} className="px-12 py-4 bg-pink-400 text-white rounded-3xl font-black text-sm shadow-xl shadow-pink-200 hover:bg-pink-500 transition-colors">{t.saveChanges}</button>
-                      <button onClick={() => setShowEditMeta(false)} className="px-12 py-4 bg-gray-100 text-gray-500 rounded-3xl font-black text-sm hover:bg-gray-200 transition-colors">{t.close}</button>
-                   </div>
-                </div>
-             </div>
-          </div>
-        )}
-
-        {/* Reference Solution View */}
-        {showSolution && (
-          <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-30 p-12 overflow-auto animate-fade-in custom-scrollbar">
-             <div className="max-w-4xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
-                   <h3 className="text-2xl font-black text-pink-500">{t.correctImpl}</h3>
-                   <button onClick={() => setShowSolution(false)} className="px-6 py-2 bg-gray-100 text-gray-500 rounded-full font-bold text-xs hover:bg-gray-200 transition-colors">{t.close}</button>
-                </div>
-                <div className="bg-gray-900 rounded-[2.5rem] p-10 overflow-hidden shadow-2xl">
-                   <pre className="text-green-400 font-mono text-xs leading-relaxed whitespace-pre-wrap">{question[framework].solution}</pre>
-                </div>
-             </div>
-          </div>
-        )}
-
-        {hint && (
-          <div className="absolute bottom-10 left-10 right-10 bg-pink-500 text-white p-6 rounded-3xl shadow-2xl animate-slide-up z-40 flex justify-between items-center border-b-4 border-pink-700">
-            <div className="flex items-center gap-4">
-              <span className="text-3xl">💡</span>
-              <p className="text-sm font-bold leading-relaxed">{hint}</p>
+        {/* 强化后的分割线 */}
+        {layoutMode === 'both' && (
+          <div 
+            onMouseDown={() => setIsResizing(true)}
+            className={`w-2 h-full cursor-col-resize z-20 flex items-center justify-center transition-all ${isResizing ? 'bg-pink-400' : 'bg-pink-50 hover:bg-pink-200'} group`}
+          >
+            <div className="flex flex-col gap-1.5">
+               <div className={`w-1 h-1 rounded-full ${isResizing ? 'bg-white' : 'bg-pink-300'}`} />
+               <div className={`w-1 h-1 rounded-full ${isResizing ? 'bg-white' : 'bg-pink-300'}`} />
+               <div className={`w-1 h-1 rounded-full ${isResizing ? 'bg-white' : 'bg-pink-300'}`} />
             </div>
-            <button onClick={() => setHint(null)} className="w-8 h-8 flex items-center justify-center bg-white/20 rounded-full hover:bg-white/30 transition">✕</button>
+            {isResizing && <div className="fixed inset-0 cursor-col-resize z-50" />}
+          </div>
+        )}
+
+        {/* 预览 */}
+        <div 
+          className={`h-full transition-[width] duration-75 overflow-hidden ${layoutMode === 'editor' ? 'w-0 hidden' : ''}`}
+          style={{ width: layoutMode === 'both' ? `${100 - splitRatio}%` : '100%' }}
+        >
+          <iframe ref={iframeRef} className="w-full h-full bg-white" title="Preview" />
+        </div>
+
+        {/* 覆盖层组件 */}
+        {showHistory && (
+          <div className="absolute inset-y-0 right-0 w-80 bg-white/95 backdrop-blur-sm shadow-2xl z-30 border-l border-pink-50 animate-slide-left p-6 overflow-y-auto custom-scrollbar">
+            <div className="flex justify-between items-center mb-6">
+              <h4 className="font-black text-gray-800 text-sm">{t.pastVersions}</h4>
+              <button onClick={() => setShowHistory(false)} className="w-8 h-8 flex items-center justify-center bg-gray-50 rounded-full text-gray-300 hover:text-gray-600">✕</button>
+            </div>
+            <div className="space-y-3">
+              {history.length === 0 ? <p className="text-xs text-gray-400 italic text-center py-10">{t.noHistory}</p> : history.map(h => (
+                <button key={h.id} onClick={() => { editorRef.current?.setValue(h.code); setShowHistory(false); }} className="w-full text-left p-4 rounded-2xl bg-gray-50 hover:bg-pink-50 transition border border-transparent hover:border-pink-200">
+                  <div className="text-[10px] font-black text-pink-300 mb-1">{new Date(h.timestamp).toLocaleString()}</div>
+                  <div className="text-[11px] text-gray-500 font-mono truncate">{h.code.substring(0, 40)}...</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {showSaveNaming && (
+          <div className="absolute inset-0 bg-pink-900/10 backdrop-blur-sm z-40 flex items-center justify-center p-6 animate-fade-in">
+             <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl border border-pink-100 max-w-sm w-full">
+                <h3 className="text-xl font-black text-gray-800 mb-6 text-center">{t.save}</h3>
+                <input value={versionName} onChange={e => setVersionName(e.target.value)} placeholder={t.placeholderVersion} className="w-full bg-pink-50/50 border-2 border-pink-50 rounded-2xl px-5 py-4 text-sm mb-6 outline-none focus:border-pink-300 transition-all" />
+                <div className="flex gap-3">
+                   <button onClick={handleSaveAttempt} className="flex-1 py-4 bg-pink-400 text-white rounded-2xl font-black text-sm hover:bg-pink-500 shadow-lg shadow-pink-100 transition">OK</button>
+                   <button onClick={() => setShowSaveNaming(false)} className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black text-sm hover:bg-gray-200 transition">CANCEL</button>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {showSolution && (
+          <div className="absolute inset-0 bg-white/98 backdrop-blur-md z-40 p-10 overflow-hidden animate-fade-in flex flex-col">
+             <div className="max-w-5xl mx-auto w-full h-full flex flex-col">
+                <div className="flex justify-between items-center mb-6 shrink-0">
+                   <div>
+                     <h3 className="text-2xl font-black text-pink-500">{t.correctImpl}</h3>
+                     <p className="text-xs text-gray-400 font-medium">Standard solution for reference</p>
+                   </div>
+                   <button onClick={() => setShowSolution(false)} className="px-8 py-3 bg-gray-100 text-gray-500 rounded-2xl font-black text-xs hover:bg-gray-200 transition">CLOSE</button>
+                </div>
+                <div className="flex-1 bg-gray-900 rounded-[2.5rem] p-8 shadow-inner overflow-hidden flex flex-col">
+                   <div className="flex-1 overflow-y-auto custom-scrollbar pr-4 font-mono text-[13px] text-green-400">
+                      <pre className="whitespace-pre-wrap">{question[framework].solution}</pre>
+                   </div>
+                </div>
+             </div>
           </div>
         )}
       </div>
@@ -260,10 +278,11 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
       <style>{`
         @keyframes slide-left { from { transform: translateX(100%); } to { transform: translateX(0); } }
         .animate-slide-left { animation: slide-left 0.4s cubic-bezier(0.19, 1, 0.22, 1); }
-        @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-        .animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.19, 1, 0.22, 1); }
         @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
         .animate-fade-in { animation: fade-in 0.3s ease-out; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
       `}</style>
     </div>
   );
