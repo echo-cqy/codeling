@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { Question, Language, AIModelConfig } from "../types";
 import { storageService } from "./storageService";
@@ -6,6 +5,12 @@ import { storageService } from "./storageService";
 export const aiService = {
   async getHint(description: string, currentCode: string, lang: Language): Promise<string> {
     const config = storageService.getStats().aiConfig;
+    
+    // Always use callGemini for Gemini provider to ensure correct API key and model usage
+    if (config?.provider === 'gemini') {
+      return this.callGemini(description, currentCode, lang);
+    }
+
     if (!config || !config.apiKey) {
       return this.callGemini(description, currentCode, lang);
     }
@@ -22,6 +27,12 @@ export const aiService = {
   async testConnection(config: AIModelConfig): Promise<boolean> {
     const prompt = "Please respond with exactly the word 'OK'.";
     try {
+      // For Gemini, we use process.env.API_KEY and assumed to be valid if provided
+      if (config.provider === 'gemini') {
+        const result = await this.callGeminiJson(prompt);
+        return typeof result === 'string' && result.toLowerCase().includes("ok");
+      }
+
       if (!config.apiKey || !config.apiKey.trim()) {
         console.warn("Test connection failed: API Key is empty.");
         return false;
@@ -52,7 +63,10 @@ export const aiService = {
       }`;
 
     let jsonResponse: string;
-    if (config && config.apiKey && config.apiKey.trim()) {
+    // For Gemini, we always ignore config.apiKey and use process.env.API_KEY
+    if (config?.provider === 'gemini') {
+      jsonResponse = await this.callGeminiJson(prompt);
+    } else if (config && config.apiKey && config.apiKey.trim()) {
       jsonResponse = await this.callProvider(config, prompt);
     } else {
       jsonResponse = await this.callGeminiJson(prompt);
@@ -73,7 +87,9 @@ export const aiService = {
     }
   },
 
+  // Simplified helper for text content generation with Gemini
   async callGemini(description: string, currentCode: string, lang: Language): Promise<string> {
+    // Initializing Gemini with process.env.API_KEY as per guidelines
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const prompt = `Hint for: ${description}. Code: ${currentCode}. Lang: ${lang}`;
     const response = await ai.models.generateContent({
@@ -83,7 +99,9 @@ export const aiService = {
     return response.text || "Keep coding!";
   },
 
+  // Simplified helper for JSON content generation with Gemini
   async callGeminiJson(prompt: string): Promise<string> {
+    // Initializing Gemini with process.env.API_KEY as per guidelines
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -99,7 +117,17 @@ export const aiService = {
     const model = (config.model || "").trim();
     const baseUrl = (config.baseUrl || "").trim();
 
-    // Standard fallback models per provider
+    // Gemini logic for official SDK using mandatory process.env.API_KEY
+    if (provider === 'gemini' && !baseUrl) {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: model || 'gemini-3-flash-preview',
+        contents: prompt,
+      });
+      return response.text || "";
+    }
+
+    // Default API endpoints and fallback models for other providers
     const defaultModels: Record<string, string> = {
       openai: "gpt-3.5-turbo",
       anthropic: "claude-3-haiku-20240307",
@@ -111,7 +139,6 @@ export const aiService = {
       hunyuan: "hunyuan-lite"
     };
 
-    // Default API endpoints
     const endpoints: Record<string, string> = {
       openai: "https://api.openai.com/v1/chat/completions",
       anthropic: "https://api.anthropic.com/v1/messages",
@@ -120,38 +147,20 @@ export const aiService = {
       mistral: "https://api.mistral.ai/v1/chat/completions",
       moonshot: "https://api.moonshot.cn/v1/chat/completions",
       qianwen: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      hunyuan: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
-      gemini: "https://generativelanguage.googleapis.com/v1beta/models/"
+      hunyuan: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions"
     };
 
-    // Gemini logic for official SDK
-    if (provider === 'gemini' && !baseUrl) {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: model || 'gemini-3-flash-preview',
-        contents: prompt,
-      });
-      return response.text || "";
-    }
-
-    // URL Resolution
+    // URL Resolution for standard chat completion endpoints
     let url = baseUrl || endpoints[provider] || endpoints['openai'];
-
-    // If it's not Anthropic and doesn't look like a full path, append /v1/chat/completions
     if (provider !== 'anthropic' && !url.toLowerCase().includes('/completions')) {
-      url = url.replace(/\/+$/, ''); // Remove trailing slashes
-      
-      // Don't append /v1 if it's already there or if it's a specific provider that doesn't use it in this context
+      url = url.replace(/\/+$/, '');
       if (!url.toLowerCase().includes('/v1') && provider !== 'qianwen') {
         url += '/v1';
       }
       url += '/chat/completions';
     }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     let body: any;
 
     if (provider === 'anthropic') {
@@ -166,19 +175,14 @@ export const aiService = {
     } else {
       headers['Authorization'] = `Bearer ${apiKey}`;
       body = {
-        model: model || defaultModels[provider] || (provider === 'gemini' ? 'gemini-3-flash-preview' : 'gpt-3.5-turbo'),
+        model: model || defaultModels[provider] || 'gpt-3.5-turbo',
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7
       };
     }
 
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      });
-
+      const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!response.ok) {
         let errorDetail = "";
         try {
@@ -190,17 +194,9 @@ export const aiService = {
         }
         throw new Error(`API Error (${response.status}): ${errorDetail}`);
       }
-
       const data = await response.json();
-      
-      if (provider === 'anthropic') {
-        return data.content[0].text;
-      }
-      
-      if (data.choices && data.choices[0]?.message?.content) {
-        return data.choices[0].message.content;
-      }
-
+      if (provider === 'anthropic') return data.content[0].text;
+      if (data.choices && data.choices[0]?.message?.content) return data.choices[0].message.content;
       throw new Error("Unrecognized response format from the API provider.");
     } catch (e: any) {
       console.error(`[AI Provider ${provider} Failed]`, e.message || e);

@@ -1,10 +1,8 @@
-
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { storageService } from './services/storageService';
 import { aiService } from './services/aiService';
-import { markdownService } from './services/markdownService';
-import { Question, UserStats, Framework, Difficulty, Language, UserProfile, AIModelConfig, AIProvider } from './types';
+import { Question, UserStats, Framework, Difficulty, Language, AIProvider } from './types';
 import EditorPane from './components/EditorPane';
 import StatsView from './components/StatsView';
 import MarkdownViewer from './components/MarkdownViewer';
@@ -128,12 +126,13 @@ function App() {
   };
 
   const handleTestConnection = async () => {
-    if (!stats.aiConfig?.apiKey) {
+    // For Gemini, we don't check for an API key in stats since it uses process.env.API_KEY
+    if (stats.aiConfig?.provider !== 'gemini' && !stats.aiConfig?.apiKey) {
       setFeedback({ message: lang === 'zh' ? '请填写 API Key' : 'Fill API Key', type: 'error' });
       return;
     }
     setTestStatus('testing');
-    const result = await aiService.testConnection(stats.aiConfig);
+    const result = await aiService.testConnection(stats.aiConfig!);
     if (result) {
       setTestStatus('success');
       setFeedback({ message: 'CONNECTED ✨', type: 'success' });
@@ -523,16 +522,29 @@ function App() {
                     </select>
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">API Key</label>
-                  <input 
-                    type="password"
-                    placeholder="sk-..."
-                    defaultValue={stats.aiConfig?.apiKey}
-                    onBlur={e => { storageService.saveAIConfig({ ...stats.aiConfig!, apiKey: e.target.value }); handleRefreshStats(); }}
-                    className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-200"
-                  />
-                </div>
+                
+                {/* As per Gemini guidelines, we do not ask the user for an API key when Gemini is the selected provider */}
+                {stats.aiConfig?.provider !== 'gemini' ? (
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">API Key</label>
+                    <input 
+                      type="password"
+                      placeholder="sk-..."
+                      defaultValue={stats.aiConfig?.apiKey}
+                      onBlur={e => { storageService.saveAIConfig({ ...stats.aiConfig!, apiKey: e.target.value }); handleRefreshStats(); }}
+                      className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-200"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-4 bg-pink-50 rounded-2xl border border-pink-100 text-center">
+                    <p className="text-[10px] font-black text-pink-500 uppercase tracking-widest">
+                      Gemini API Key Managed Internally
+                    </p>
+                    <p className="text-[10px] text-pink-300 mt-1">
+                      {lang === 'zh' ? '该提供商已通过系统自动配置。' : 'This provider is configured automatically via the system.'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="pt-6 border-t border-pink-50">

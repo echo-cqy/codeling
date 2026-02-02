@@ -131,6 +131,10 @@
         .animate-shake {
           animation: shake 0.3s ease-in-out infinite;
         }
+
+        /* Repl Styles */
+        .vue-repl-container { width: 100%; height: 100%; }
+        .vue-repl-container iframe { border: none; width: 100%; height: 100%; }
     </style>
     <!-- Monaco Editor Loader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
@@ -139,10 +143,14 @@
   "imports": {
     "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
     "canvas-confetti": "https://esm.sh/canvas-confetti@^1.9.3",
-    "marked": "https://esm.sh/marked@12.0.0"
+    "marked": "https://esm.sh/marked@12.0.0",
+    "@codesandbox/sandpack-client": "https://esm.sh/@codesandbox/sandpack-client@^2.19.8",
+    "vue": "https://esm.sh/vue@3.4.21",
+    "@vue/repl": "https://esm.sh/@vue/repl@4.4.1?deps=vue@3.4.21",
+    "@vue/compiler-sfc": "https://esm.sh/@vue/compiler-sfc@3.4.21"
   }
 }
 </script>

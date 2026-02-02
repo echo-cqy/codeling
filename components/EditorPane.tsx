@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { storageService } from '../services/storageService';
-import { playgroundService } from '../services/playgroundService';
 import { Framework, Attempt, Language, Question } from '../types';
 import { translations } from '../i18n';
+import { loadSandpackClient, SandpackClient } from '@codesandbox/sandpack-client';
 
 interface EditorPaneProps {
   question: Question;
@@ -100,12 +99,20 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
 
   const editorRef = useRef<any>(null);
   const monacoContainerRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  
+  const sandpackClientRef = useRef<SandpackClient | null>(null);
+  const vueReplStoreRef = useRef<any>(null);
+  const vueAppRef = useRef<any>(null);
   const isMounted = useRef(true);
 
   useEffect(() => {
     isMounted.current = true;
-    return () => { isMounted.current = false; };
+    return () => { 
+      isMounted.current = false;
+      if (sandpackClientRef.current) sandpackClientRef.current.destroy();
+      if (vueAppRef.current) vueAppRef.current.unmount();
+    };
   }, []);
 
   const refreshHistory = useCallback(() => {
@@ -116,19 +123,33 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
 
   useEffect(() => { refreshHistory(); }, [refreshHistory]);
 
+  const activeCode = useMemo(() => {
+    if (activeSource === 'draft') {
+      return storageService.getDraft(question.id, framework) || question[framework].initial;
+    } else if (activeSource === 'solution') {
+      return question[framework].solution;
+    } else {
+      const item = history.find(h => h.id === selectedHistoryId);
+      if (item) return item.code;
+      if (history.length > 0) return history[0].code;
+      return "// " + (lang === 'zh' ? '暂无历史版本' : 'No history yet');
+    }
+  }, [activeSource, selectedHistoryId, question, framework, history, lang]);
+
   const updatePreview = useCallback((codeToRun?: string) => {
     const code = codeToRun || (editorRef.current?.getValue());
-    if (!iframeRef.current || !code) return;
-    
-    const htmlContent = playgroundService.generateHtml(code, framework);
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    
-    const prevUrl = iframeRef.current.src;
-    iframeRef.current.src = url;
-    
-    if (prevUrl.startsWith('blob:')) {
-      setTimeout(() => URL.revokeObjectURL(prevUrl), 100);
+    if (!code) return;
+
+    if (framework === 'react' && sandpackClientRef.current) {
+      // Fix: SandpackClient uses updateSandbox instead of updatePreview
+      sandpackClientRef.current.updateSandbox({
+        files: { '/App.js': { code } }
+      });
+    } else if (framework === 'vue' && vueReplStoreRef.current) {
+      const store = vueReplStoreRef.current;
+      if (store.files['App.vue']) {
+        store.files['App.vue'].code = code;
+      }
     }
   }, [framework]);
 
@@ -155,18 +176,95 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     };
   })()).current;
 
-  const activeCode = useMemo(() => {
-    if (activeSource === 'draft') {
-      return storageService.getDraft(question.id, framework) || question[framework].initial;
-    } else if (activeSource === 'solution') {
-      return question[framework].solution;
-    } else {
-      const item = history.find(h => h.id === selectedHistoryId);
-      if (item) return item.code;
-      if (history.length > 0) return history[0].code;
-      return "// " + (lang === 'zh' ? '暂无历史版本' : 'No history yet');
+  useEffect(() => {
+    if (!previewContainerRef.current) return;
+    const container = previewContainerRef.current;
+    container.innerHTML = '';
+
+    if (framework === 'react') {
+      const iframe = document.createElement('iframe');
+      iframe.className = "w-full h-full border-none";
+      container.appendChild(iframe);
+
+      const files = {
+        '/App.js': { code: activeCode },
+        '/package.json': {
+          code: JSON.stringify({
+            dependencies: {
+              "react": "18.2.0",
+              "react-dom": "18.2.0"
+            }
+          })
+        }
+      };
+
+      loadSandpackClient(iframe, { 
+        files,
+        template: 'react' as any
+      }, { 
+        showOpenInCodeSandbox: false,
+        externalResources: ["https://cdn.tailwindcss.com"]
+      }).then(client => {
+        if (isMounted.current) sandpackClientRef.current = client;
+      }).catch(err => {
+        console.error("Sandpack Error:", err);
+      });
+    } else if (framework === 'vue') {
+      (async () => {
+        try {
+          const { createApp, h, defineComponent } = await import('vue');
+          // Fix: In @vue/repl@4.4.1, the export is ReplStore, not Store.
+          const { ReplStore, Preview } = await import('@vue/repl') as any;
+          
+          const store = new ReplStore({
+            serializedState: '',
+            defaultVueRuntimeURL: `https://esm.sh/vue@3.4.21/dist/vue.runtime.esm-browser.js`,
+            defaultVueServerRendererURL: `https://esm.sh/@vue/server-renderer@3.4.21`,
+          });
+
+          store.setFiles({
+            'App.vue': activeCode,
+            'import-map.json': JSON.stringify({
+              imports: {
+                "vue": "https://esm.sh/vue@3.4.21",
+              }
+            })
+          });
+
+          vueReplStoreRef.current = store;
+
+          const VuePreviewWrapper = defineComponent({
+            setup() {
+              return () => h(Preview, {
+                store,
+                show: true, // Fix: Added required 'show' prop for Preview component
+                showCompileOutput: false,
+                ssr: false,
+                theme: 'light'
+              });
+            }
+          });
+
+          const app = createApp(VuePreviewWrapper);
+          app.mount(container);
+          vueAppRef.current = app;
+        } catch (e) {
+          console.error("Vue Repl Error:", e);
+        }
+      })();
     }
-  }, [activeSource, selectedHistoryId, question, framework, history, lang]);
+
+    return () => {
+      if (sandpackClientRef.current) {
+        sandpackClientRef.current.destroy();
+        sandpackClientRef.current = null;
+      }
+      if (vueAppRef.current) {
+        vueAppRef.current.unmount();
+        vueAppRef.current = null;
+      }
+    };
+  }, [framework, question.id]);
 
   const isReadOnly = useMemo(() => activeSource !== 'draft', [activeSource]);
 
@@ -202,8 +300,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
           wordWrap: 'on',
           scrollBeyondLastLine: false,
         });
-
-        updatePreview(activeCode);
 
         editorRef.current.onDidChangeModelContent(() => {
           if (activeSource === 'draft') {
@@ -327,7 +423,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
           className={`h-full transition-all duration-300 overflow-hidden border-l border-pink-50 ${layoutMode === 'editor' ? 'w-0 opacity-0' : 'opacity-100'}`}
           style={{ width: layoutMode === 'both' ? `50%` : (layoutMode === 'preview' ? '100%' : '0%') }}
         >
-          <iframe ref={iframeRef} className="w-full h-full bg-white" title="Preview" />
+          <div ref={previewContainerRef} className="w-full h-full bg-white relative overflow-hidden" />
         </div>
 
         {isDrafting && activeSource === 'draft' && (
