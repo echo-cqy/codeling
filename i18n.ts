@@ -72,7 +72,11 @@ export const translations = {
     cupcake: "Cake",
     iceCream: "Hotpot",
     thankYou: "You're the sweetest! Thank you! ❤️",
-    scanPrompt: "Scan QR code to pay"
+    scanPrompt: "Scan QR code to pay",
+    testConnection: "Test Connection",
+    testing: "Testing...",
+    testSuccess: "Connection Successful! ✨",
+    testFailed: "Connection Failed. Check config."
   },
   zh: {
     workshop: "编程坊",
@@ -146,6 +150,10 @@ export const translations = {
     cupcake: "蛋糕",
     iceCream: "火锅",
     thankYou: "感谢你的慷慨支持！我会继续努力的！❤️",
-    scanPrompt: "请打开支付宝扫码"
+    scanPrompt: "请打开支付宝扫码",
+    testConnection: "测试连通性",
+    testing: "测试中...",
+    testSuccess: "连接成功！✨",
+    testFailed: "连接失败，请检查配置。"
   }
 };

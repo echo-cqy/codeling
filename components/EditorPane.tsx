@@ -170,9 +170,8 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
 
   const isReadOnly = useMemo(() => activeSource !== 'draft', [activeSource]);
 
-  // Handle activeCode change and ReadOnly toggle
   useEffect(() => {
-    updatePreview(activeCode); // Ensure preview updates immediately when switching versions
+    updatePreview(activeCode); 
     if (editorRef.current) {
       if (editorRef.current.getValue() !== activeCode) {
         editorRef.current.setValue(activeCode);
@@ -181,7 +180,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     }
   }, [activeCode, isReadOnly, updatePreview]);
 
-  // Initialize Monaco
   useEffect(() => {
     if (!monacoContainerRef.current) return;
     
@@ -205,7 +203,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
           scrollBeyondLastLine: false,
         });
 
-        // Trigger an immediate initial preview once editor is ready
         updatePreview(activeCode);
 
         editorRef.current.onDidChangeModelContent(() => {
@@ -226,7 +223,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     };
   }, [question.id, framework]);
 
-  // Layout handling
   useEffect(() => {
     if (editorRef.current) {
       const timer = setTimeout(() => editorRef.current.layout(), 350);
@@ -342,8 +338,11 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
         )}
 
         {showSaveNaming && (
-          <div className="absolute inset-0 bg-pink-900/10 backdrop-blur-sm z-[60] flex items-center justify-center p-6 animate-fade-in">
-             <div className="bg-white rounded-[3rem] p-10 shadow-2xl border border-pink-100 max-sm:w-full max-w-sm text-center">
+          <div 
+            className="absolute inset-0 bg-pink-900/10 backdrop-blur-sm z-[60] flex items-center justify-center p-6 animate-fade-in"
+            onClick={(e) => { if(e.target === e.currentTarget) setShowSaveNaming(false); }}
+          >
+             <div className="bg-white rounded-[3rem] p-10 shadow-2xl border border-pink-100 max-sm:w-full max-w-sm text-center animate-sweet-pop" onClick={e => e.stopPropagation()}>
                 <h3 className="text-xl font-black text-gray-800 mb-6">{t.save}</h3>
                 <input 
                   autoFocus

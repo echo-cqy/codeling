@@ -7,7 +7,6 @@ export const aiService = {
   async getHint(description: string, currentCode: string, lang: Language): Promise<string> {
     const config = storageService.getStats().aiConfig;
     if (!config || !config.apiKey) {
-      // Fallback to Gemini with system key if not configured manually
       return this.callGemini(description, currentCode, lang);
     }
 
@@ -18,6 +17,23 @@ export const aiService = {
     Provide a concise hint (max 2 sentences) in the specified language. Return ONLY the hint text.`;
 
     return this.callProvider(config, prompt);
+  },
+
+  async testConnection(config: AIModelConfig): Promise<boolean> {
+    const prompt = "Please respond with exactly the word 'OK'.";
+    try {
+      if (!config.apiKey || !config.apiKey.trim()) {
+        console.warn("Test connection failed: API Key is empty.");
+        return false;
+      }
+
+      const result = await this.callProvider(config, prompt);
+      console.log("Connection test response:", result);
+      return typeof result === 'string' && result.toLowerCase().includes("ok");
+    } catch (e: any) {
+      console.error("Connectivity test failed details:", e.message || e);
+      return false;
+    }
   },
 
   async generateQuestion(topic: string, lang: Language): Promise<Question> {
@@ -36,16 +52,15 @@ export const aiService = {
       }`;
 
     let jsonResponse: string;
-    // Use manual config if apiKey is provided, even for gemini
-    if (config && config.apiKey) {
+    if (config && config.apiKey && config.apiKey.trim()) {
       jsonResponse = await this.callProvider(config, prompt);
     } else {
-      // Fallback to default system gemini
       jsonResponse = await this.callGeminiJson(prompt);
     }
 
     try {
-      const data = JSON.parse(jsonResponse.trim().replace(/```json|```/g, ''));
+      const cleaned = jsonResponse.trim().replace(/^```json/, '').replace(/```$/, '');
+      const data = JSON.parse(cleaned);
       return {
         ...data,
         id: Math.random().toString(36).substr(2, 9),
@@ -62,7 +77,7 @@ export const aiService = {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const prompt = `Hint for: ${description}. Code: ${currentCode}. Lang: ${lang}`;
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite-latest',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
     return response.text || "Keep coding!";
@@ -79,9 +94,24 @@ export const aiService = {
   },
 
   async callProvider(config: AIModelConfig, prompt: string): Promise<string> {
-    const { provider, model, apiKey, baseUrl } = config;
+    const provider = config.provider;
+    const apiKey = (config.apiKey || "").trim();
+    const model = (config.model || "").trim();
+    const baseUrl = (config.baseUrl || "").trim();
 
-    // Default endpoints
+    // Standard fallback models per provider
+    const defaultModels: Record<string, string> = {
+      openai: "gpt-3.5-turbo",
+      anthropic: "claude-3-haiku-20240307",
+      deepseek: "deepseek-chat",
+      groq: "llama3-8b-8192",
+      mistral: "mistral-tiny",
+      moonshot: "moonshot-v1-8k",
+      qianwen: "qwen-turbo",
+      hunyuan: "hunyuan-lite"
+    };
+
+    // Default API endpoints
     const endpoints: Record<string, string> = {
       openai: "https://api.openai.com/v1/chat/completions",
       anthropic: "https://api.anthropic.com/v1/messages",
@@ -91,46 +121,90 @@ export const aiService = {
       moonshot: "https://api.moonshot.cn/v1/chat/completions",
       qianwen: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
       hunyuan: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
-      gemini: "https://generativelanguage.googleapis.com/v1beta/models/" 
+      gemini: "https://generativelanguage.googleapis.com/v1beta/models/"
     };
 
-    const url = baseUrl || endpoints[provider];
-
-    if (provider === 'anthropic') {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'dangerously-allow-browser': 'true'
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 1024,
-          messages: [{ role: "user", content: prompt }]
-        })
+    // Gemini logic for official SDK
+    if (provider === 'gemini' && !baseUrl) {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: model || 'gemini-3-flash-preview',
+        contents: prompt,
       });
-      const data = await response.json();
-      return data.content[0].text;
+      return response.text || "";
     }
 
-    // OpenAI compatible providers (DeepSeek, Groq, Mistral, Moonshot, Qianwen, Hunyuan)
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
+    // URL Resolution
+    let url = baseUrl || endpoints[provider] || endpoints['openai'];
+
+    // If it's not Anthropic and doesn't look like a full path, append /v1/chat/completions
+    if (provider !== 'anthropic' && !url.toLowerCase().includes('/completions')) {
+      url = url.replace(/\/+$/, ''); // Remove trailing slashes
+      
+      // Don't append /v1 if it's already there or if it's a specific provider that doesn't use it in this context
+      if (!url.toLowerCase().includes('/v1') && provider !== 'qianwen') {
+        url += '/v1';
+      }
+      url += '/chat/completions';
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    let body: any;
+
+    if (provider === 'anthropic') {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      headers['dangerously-allow-browser'] = 'true';
+      body = {
+        model: model || defaultModels.anthropic,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }]
+      };
+    } else {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      body = {
+        model: model || defaultModels[provider] || (provider === 'gemini' ? 'gemini-3-flash-preview' : 'gpt-3.5-turbo'),
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7
-      })
-    });
+      };
+    }
 
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message || "API Request Failed");
-    return data.choices[0].message.content;
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        let errorDetail = "";
+        try {
+          const errorJson = await response.json();
+          errorDetail = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
+        } catch (e) {
+          const errorText = await response.text();
+          errorDetail = errorText || `HTTP status ${response.status}`;
+        }
+        throw new Error(`API Error (${response.status}): ${errorDetail}`);
+      }
+
+      const data = await response.json();
+      
+      if (provider === 'anthropic') {
+        return data.content[0].text;
+      }
+      
+      if (data.choices && data.choices[0]?.message?.content) {
+        return data.choices[0].message.content;
+      }
+
+      throw new Error("Unrecognized response format from the API provider.");
+    } catch (e: any) {
+      console.error(`[AI Provider ${provider} Failed]`, e.message || e);
+      throw e;
+    }
   }
 };
