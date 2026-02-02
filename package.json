@@ -9,17 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "@babel/standalone": "^7.29.0",
     "@google/genai": "^1.39.0",
+    "@vue/compiler-sfc": "^3.5.27",
+    "@vue/repl": "4.4.1",
     "canvas-confetti": "^1.9.3",
     "marked": "12.0.0",
-    "@codesandbox/sandpack-client": "^2.19.8",
-    "vue": "3.4.21",
-    "@vue/repl": "4.4.1",
-    "@vue/compiler-sfc": "3.4.21"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "vue": "^3.5.27"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

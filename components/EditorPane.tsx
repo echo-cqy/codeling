@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { storageService } from '../services/storageService';
 import { Framework, Attempt, Language, Question } from '../types';
 import { translations } from '../i18n';
-import { loadSandpackClient, SandpackClient } from '@codesandbox/sandpack-client';
+import '@vue/repl/style.css';
 
 interface EditorPaneProps {
   question: Question;
@@ -101,7 +101,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
   const monacoContainerRef = useRef<HTMLDivElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   
-  const sandpackClientRef = useRef<SandpackClient | null>(null);
   const vueReplStoreRef = useRef<any>(null);
   const vueAppRef = useRef<any>(null);
   const isMounted = useRef(true);
@@ -110,7 +109,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     isMounted.current = true;
     return () => { 
       isMounted.current = false;
-      if (sandpackClientRef.current) sandpackClientRef.current.destroy();
       if (vueAppRef.current) vueAppRef.current.unmount();
     };
   }, []);
@@ -136,15 +134,74 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     }
   }, [activeSource, selectedHistoryId, question, framework, history, lang]);
 
+  // React Preview Generator
+  const generateReactPreview = (code: string) => {
+    // Basic transformation to make the code runnable in browser with Babel
+    // 1. Remove import React
+    // 2. Change export default to render
+    // 3. Destructure hooks from React
+    
+    let processedCode = code
+      .replace(/import\s+React.*?;/g, '')
+      .replace(/import\s+.*?from\s+['"]react['"];/g, '')
+      .replace(/export\s+default\s+function\s+(\w+)/, 'function $1')
+      .replace(/export\s+default\s+/, 'const App = ');
+
+    // Extract all hooks/functions used from React that are not defined
+    const commonHooks = ['useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext', 'useReducer'];
+    const hooksToDestructure = commonHooks.filter(hook => processedCode.includes(hook) && !processedCode.includes(`function ${hook}`) && !processedCode.includes(`const ${hook}`));
+    
+    if (hooksToDestructure.length > 0) {
+      processedCode = `const { ${hooksToDestructure.join(', ')} } = React;\n` + processedCode;
+    }
+
+    // Find the component name if it was "export default function App" -> "function App"
+    let componentName = 'App';
+    const match = code.match(/export\s+default\s+function\s+(\w+)/);
+    if (match) componentName = match[1];
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <script src="https://cdn.tailwindcss.com"></script>
+          <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+          <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+          <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+          <style>
+            body { margin: 0; padding: 0; font-family: 'Quicksand', sans-serif; }
+            #root { height: 100vh; overflow: auto; }
+          </style>
+        </head>
+        <body>
+          <div id="root"></div>
+          <script type="text/babel">
+            ${processedCode}
+            
+            // Check if App is defined, otherwise try to find the default export
+            try {
+               const root = ReactDOM.createRoot(document.getElementById('root'));
+               root.render(<${componentName} />);
+            } catch (e) {
+               document.getElementById('root').innerHTML = '<div style="color:red;padding:20px"><pre>' + e.message + '</pre></div>';
+            }
+          </script>
+        </body>
+      </html>
+    `;
+  };
+
   const updatePreview = useCallback((codeToRun?: string) => {
     const code = codeToRun || (editorRef.current?.getValue());
     if (!code) return;
 
-    if (framework === 'react' && sandpackClientRef.current) {
-      // Fix: SandpackClient uses updateSandbox instead of updatePreview
-      sandpackClientRef.current.updateSandbox({
-        files: { '/App.js': { code } }
-      });
+    if (framework === 'react') {
+      const iframe = previewContainerRef.current?.querySelector('iframe');
+      if (iframe) {
+        const html = generateReactPreview(code);
+        iframe.srcdoc = html;
+      }
     } else if (framework === 'vue' && vueReplStoreRef.current) {
       const store = vueReplStoreRef.current;
       if (store.files['App.vue']) {
@@ -157,7 +214,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
     let t_ref: any;
     return (code?: string) => {
       clearTimeout(t_ref);
-      t_ref = setTimeout(() => updatePreview(code), 300);
+      t_ref = setTimeout(() => updatePreview(code), 500);
     };
   })()).current;
 
@@ -179,104 +236,97 @@ const EditorPane: React.FC<EditorPaneProps> = ({ question, framework, lang, onSa
   useEffect(() => {
     if (!previewContainerRef.current) return;
     const container = previewContainerRef.current;
-    container.innerHTML = '';
-
+    
+    // Clear previous content
+    // container.innerHTML = ''; // Don't clear for Vue to avoid remounting issues if not needed
+    
     if (framework === 'react') {
+      container.innerHTML = ''; // Clear for React iframe
       const iframe = document.createElement('iframe');
-      iframe.className = "w-full h-full border-none";
+      iframe.className = "w-full h-full border-none bg-white";
+      iframe.sandbox.add('allow-scripts', 'allow-same-origin'); 
       container.appendChild(iframe);
-
-      const files = {
-        '/App.js': { code: activeCode },
-        '/package.json': {
-          code: JSON.stringify({
-            dependencies: {
-              "react": "18.2.0",
-              "react-dom": "18.2.0"
-            }
-          })
-        }
-      };
-
-      loadSandpackClient(iframe, { 
-        files,
-        template: 'react' as any
-      }, { 
-        showOpenInCodeSandbox: false,
-        externalResources: ["https://cdn.tailwindcss.com"]
-      }).then(client => {
-        if (isMounted.current) sandpackClientRef.current = client;
-      }).catch(err => {
-        console.error("Sandpack Error:", err);
-      });
+      updatePreview(activeCode);
     } else if (framework === 'vue') {
+      if (vueAppRef.current) {
+         // If Vue app exists, just update code
+         updatePreview(activeCode);
+         return;
+      }
+
+      container.innerHTML = ''; // Clear for Vue mount
       (async () => {
         try {
           const { createApp, h, defineComponent } = await import('vue');
-          // Fix: In @vue/repl@4.4.1, the export is ReplStore, not Store.
-          const { ReplStore, Preview } = await import('@vue/repl') as any;
+          const VueRepl = await import('@vue/repl') as any;
+          const useStore = VueRepl.useStore || VueRepl.default?.useStore;
+          const Repl = VueRepl.Repl || VueRepl.default?.Repl;
+          const MonacoEditor = (await import('@vue/repl/monaco-editor') as any).default;
           
-          const store = new ReplStore({
-            serializedState: '',
-            defaultVueRuntimeURL: `https://esm.sh/vue@3.4.21/dist/vue.runtime.esm-browser.js`,
-            defaultVueServerRendererURL: `https://esm.sh/@vue/server-renderer@3.4.21`,
+          if (!useStore || !Repl || !MonacoEditor) {
+             throw new Error('Vue Repl components not found');
+          }
+
+          const store = useStore({
+            defaultVueRuntimeURL: `https://unpkg.com/vue@3.4.21/dist/vue.runtime.esm-browser.js`,
+            defaultVueServerRendererURL: `https://unpkg.com/@vue/server-renderer@3.4.21/dist/server-renderer.esm-browser.js`,
           });
 
           store.setFiles({
             'App.vue': activeCode,
             'import-map.json': JSON.stringify({
               imports: {
-                "vue": "https://esm.sh/vue@3.4.21",
+                "vue": "https://unpkg.com/vue@3.4.21/dist/vue.esm-browser.js",
               }
             })
           });
 
           vueReplStoreRef.current = store;
 
-          const VuePreviewWrapper = defineComponent({
+          const VueReplWrapper = defineComponent({
             setup() {
-              return () => h(Preview, {
+              return () => h(Repl, {
                 store,
-                show: true, // Fix: Added required 'show' prop for Preview component
+                editor: MonacoEditor,
                 showCompileOutput: false,
-                ssr: false,
-                theme: 'light'
+                previewOptions: {
+                   headHTML: '<script src="https://cdn.tailwindcss.com"></script>'
+                }
               });
             }
           });
 
-          const app = createApp(VuePreviewWrapper);
+          const app = createApp(VueReplWrapper);
           app.mount(container);
           vueAppRef.current = app;
         } catch (e) {
           console.error("Vue Repl Error:", e);
+          container.innerHTML = `<div class="p-4 text-red-500">Vue Repl Error: ${e instanceof Error ? e.message : String(e)}</div>`;
         }
       })();
     }
 
     return () => {
-      if (sandpackClientRef.current) {
-        sandpackClientRef.current.destroy();
-        sandpackClientRef.current = null;
-      }
-      if (vueAppRef.current) {
-        vueAppRef.current.unmount();
-        vueAppRef.current = null;
-      }
+       // Cleanup handled in main effect or when switching frameworks
+       if (framework === 'react') {
+         // No specific cleanup for iframe needed
+       }
     };
   }, [framework, question.id]);
 
   const isReadOnly = useMemo(() => activeSource !== 'draft', [activeSource]);
 
   useEffect(() => {
-    updatePreview(activeCode); 
+    // Sync Editor with Code
     if (editorRef.current) {
       if (editorRef.current.getValue() !== activeCode) {
         editorRef.current.setValue(activeCode);
       }
       editorRef.current.updateOptions({ readOnly: isReadOnly });
+      // Also update preview when switching versions
+      updatePreview(activeCode);
     }
-  }, [activeCode, isReadOnly, updatePreview]);
+  }, [activeCode, isReadOnly]);
 
   useEffect(() => {
     if (!monacoContainerRef.current) return;

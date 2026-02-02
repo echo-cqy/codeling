@@ -18,6 +18,9 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      optimizeDeps: {
+        include: ['@vue/repl', '@vue/repl/monaco-editor', 'vue/dist/vue.esm-bundler.js']
       }
     };
 });

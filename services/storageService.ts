@@ -7,6 +7,15 @@ const QUESTIONS_KEY = 'codeling_questions';
 const LANG_KEY = 'codeling_lang';
 const DRAFT_PREFIX = 'codeling_draft_';
 
+const DEFAULT_STATS: UserStats = {
+  solvedCount: 0,
+  totalAttempts: 0,
+  streak: 0,
+  history: [],
+  profile: { name: 'Sweet Coder', avatar: '🍭', joinedAt: Date.now() },
+  aiConfig: { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: '' }
+};
+
 export const storageService = {
   getLanguage: (): Language => {
     return (localStorage.getItem(LANG_KEY) as Language) || 'en';
@@ -22,7 +31,12 @@ export const storageService = {
       localStorage.setItem(QUESTIONS_KEY, JSON.stringify(MOCK_QUESTIONS));
       return MOCK_QUESTIONS;
     }
-    return JSON.parse(data);
+    try {
+        return JSON.parse(data);
+    } catch (e) {
+        console.error("Failed to parse questions", e);
+        return MOCK_QUESTIONS;
+    }
   },
 
   saveQuestions: (questions: Question[]) => {
@@ -74,16 +88,21 @@ export const storageService = {
   getStats: (): UserStats => {
     const data = localStorage.getItem(STATS_KEY);
     if (!data) {
-      return { 
-        solvedCount: 0, 
-        totalAttempts: 0, 
-        streak: 0, 
-        history: [],
-        profile: { name: 'Sweet Coder', avatar: '🍭', joinedAt: Date.now() },
-        aiConfig: { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: '' }
-      };
+      return DEFAULT_STATS;
     }
-    return JSON.parse(data);
+    try {
+      const parsed = JSON.parse(data);
+      // Merge with default stats to ensure all fields exist (handling migration from older versions)
+      return {
+        ...DEFAULT_STATS,
+        ...parsed,
+        profile: { ...DEFAULT_STATS.profile, ...(parsed.profile || {}) },
+        aiConfig: { ...DEFAULT_STATS.aiConfig, ...(parsed.aiConfig || {}) }
+      };
+    } catch (e) {
+      console.error("Failed to parse stats", e);
+      return DEFAULT_STATS;
+    }
   },
 
   saveProfile: (profile: UserProfile) => {

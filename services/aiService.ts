@@ -102,7 +102,12 @@ export const aiService = {
   // Simplified helper for JSON content generation with Gemini
   async callGeminiJson(prompt: string): Promise<string> {
     // Initializing Gemini with process.env.API_KEY as per guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = process.env.API_KEY || '';
+    if (!apiKey) {
+      console.warn("Gemini API Key is missing");
+      return "{}";
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,

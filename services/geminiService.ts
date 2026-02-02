@@ -4,7 +4,11 @@ import { Question, Language } from "../types";
 
 export const geminiService = {
   getHint: async (description: string, currentCode: string, lang: Language): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = process.env.API_KEY || '';
+    if (!apiKey) {
+       return lang === 'zh' ? "请配置 API Key" : "Please configure API Key";
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const prompt = `Frontend Question Hint Request:
     Goal: ${description}
     Current Code: ${currentCode}
@@ -21,7 +25,9 @@ export const geminiService = {
   },
 
   generateQuestion: async (topic: string, lang: Language): Promise<Question> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = process.env.API_KEY || '';
+    if (!apiKey) throw new Error(lang === 'zh' ? "请配置 API Key" : "Please configure API Key");
+    const ai = new GoogleGenAI({ apiKey });
     const prompt = `Generate a frontend hand-coding interview question about "${topic}". 
       All descriptive text (title, description, category) must be in ${lang === 'zh' ? 'Chinese' : 'English'}.
       Return the response in valid JSON format only, following this structure:
