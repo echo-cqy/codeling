@@ -23,6 +23,9 @@
     "react-dom": "^19.2.4",
     "vue": "^3.5.27"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.57.1"
+  },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.14.0",
