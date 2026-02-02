@@ -8,6 +8,15 @@ export enum Difficulty {
 export type Framework = 'react' | 'vue';
 export type Language = 'en' | 'zh';
 
+export type AIProvider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'groq' | 'mistral' | 'moonshot' | 'qianwen' | 'hunyuan';
+
+export interface AIModelConfig {
+  provider: AIProvider;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
 export interface QuestionCode {
   initial: string;
   solution: string;
@@ -33,7 +42,14 @@ export interface Attempt {
   code: string;
   timestamp: number;
   status: 'passed' | 'working' | 'hinted';
-  name?: string; // Added for naming versions
+  name?: string;
+  isStarred?: boolean;
+}
+
+export interface UserProfile {
+  name: string;
+  avatar: string;
+  joinedAt: number;
 }
 
 export interface UserStats {
@@ -41,4 +57,6 @@ export interface UserStats {
   totalAttempts: number;
   streak: number;
   history: Attempt[];
+  profile?: UserProfile;
+  aiConfig?: AIModelConfig;
 }
