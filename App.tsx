@@ -1,11 +1,14 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { storageService } from './services/storageService';
 import { aiService } from './services/aiService';
+import { markdownService } from './services/markdownService';
 import { Question, UserStats, Framework, Difficulty, Language, UserProfile, AIModelConfig, AIProvider } from './types';
 import EditorPane from './components/EditorPane';
 import StatsView from './components/StatsView';
+import MarkdownViewer from './components/MarkdownViewer';
+import ImportModal from './components/ImportModal';
 import { translations } from './i18n';
 
 const DEFAULT_REACT_INITIAL = `import React from 'react';\n\nexport default function App() {\n  return (\n    <div className="p-10">\n      <h1 className="text-2xl font-bold text-pink-500">Hello React</h1>\n    </div>\n  );\n}`;
@@ -22,26 +25,37 @@ const PROVIDERS: { id: AIProvider; name: string }[] = [
   { id: 'hunyuan', name: 'Hunyuan' },
 ];
 
-const SuccessAnimation = ({ onComplete }: { onComplete: () => void }) => {
+const FeedbackAnimation = ({ onComplete, message, type = 'success' }: { onComplete: () => void, message?: string, type?: 'success' | 'error' }) => {
   useEffect(() => {
-    const timer = setTimeout(onComplete, 1600);
-    confetti({
-      particleCount: 120,
-      spread: 80,
-      origin: { y: 0.6 },
-      colors: ['#f472b6', '#fb7185', '#fda4af', '#f9a8d4']
-    });
+    const timer = setTimeout(onComplete, 1800);
+    if (type === 'success') {
+      confetti({
+        particleCount: 120,
+        spread: 80,
+        origin: { y: 0.6 },
+        colors: ['#f472b6', '#fb7185', '#fda4af', '#f9a8d4']
+      });
+    }
     return () => clearTimeout(timer);
-  }, [onComplete]);
+  }, [onComplete, type]);
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-white/40 backdrop-blur-md animate-fade-in">
-      <div className="success-bg bg-white p-12 rounded-[4rem] shadow-2xl border border-pink-100 flex flex-col items-center">
-        <svg className="success-checkmark" viewBox="0 0 52 52">
-          <circle cx="26" cy="26" r="25" fill="none" />
-          <path fill="none" stroke="#f472b6" strokeWidth="4" strokeLinecap="round" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
-        </svg>
-        <p className="mt-6 text-xl font-black text-pink-500 tracking-tighter uppercase">Success ✨</p>
+      <div className={`success-bg bg-white p-12 rounded-[4rem] shadow-2xl border flex flex-col items-center animate-sweet-pop ${type === 'success' ? 'border-pink-100' : 'border-red-100'}`}>
+        {type === 'success' ? (
+          <svg className="success-checkmark" viewBox="0 0 52 52">
+            <circle cx="26" cy="26" r="25" fill="none" />
+            <path fill="none" stroke="#f472b6" strokeWidth="4" strokeLinecap="round" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
+          </svg>
+        ) : (
+          <svg className="success-checkmark failure-cross" viewBox="0 0 52 52">
+            <circle cx="26" cy="26" r="25" fill="none" />
+            <path fill="none" stroke="#ef4444" strokeWidth="4" strokeLinecap="round" d="M16 16L36 36M36 16L16 36" />
+          </svg>
+        )}
+        <p className={`mt-6 text-xl font-black tracking-tighter uppercase ${type === 'success' ? 'text-pink-500' : 'text-red-500'}`}>
+          {message || (type === 'success' ? 'Success ✨' : 'Failed ❌')}
+        </p>
       </div>
     </div>
   );
@@ -50,6 +64,7 @@ const SuccessAnimation = ({ onComplete }: { onComplete: () => void }) => {
 function App() {
   const [lang, setLang] = useState<Language>(storageService.getLanguage());
   const [questions, setQuestions] = useState<Question[]>(storageService.getQuestions());
+  const [activeCategory, setActiveCategory] = useState<string>('All');
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [framework, setFramework] = useState<Framework>('react');
   const [view, setView] = useState<'editor' | 'stats'>('editor');
@@ -58,30 +73,10 @@ function App() {
   const [stats, setStats] = useState<UserStats>(storageService.getStats());
   const [showSettings, setShowSettings] = useState(false);
   const [showManualAdd, setShowManualAdd] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [feedback, setFeedback] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   
-  // Support Modal State
-  const [showSupport, setShowSupport] = useState(false);
-  const [supportStep, setSupportStep] = useState<'select' | 'pay'>('select');
-  const [selectedSupportAmount, setSelectedSupportAmount] = useState<number>(0);
-
-  const [toast, setToast] = useState<{message: string, type: 'success' | 'error' | 'delete'} | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string>('All');
-
-  // Manual Add Form State
-  const [newQuestion, setNewQuestion] = useState<Partial<Question>>({
-    title: '',
-    difficulty: Difficulty.EASY,
-    category: '',
-    description: '',
-    react: { initial: DEFAULT_REACT_INITIAL, solution: '' },
-    vue: { initial: DEFAULT_VUE_INITIAL, solution: '' },
-    tags: []
-  });
-  const [manualTab, setManualTab] = useState<'info' | 'react' | 'vue'>('info');
-
   const t = translations[lang];
 
   const categories = useMemo(() => {
@@ -90,13 +85,14 @@ function App() {
   }, [questions]);
 
   const filteredQuestions = useMemo(() => {
+    const term = magicTopic.toLowerCase(); 
     return questions.filter(q => {
-      const matchesSearch = q.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          q.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSearch = q.title.toLowerCase().includes(term) || 
+                          q.tags.some(tag => tag.toLowerCase().includes(term));
       const matchesCategory = activeCategory === 'All' || q.category === activeCategory;
       return matchesSearch && matchesCategory;
     });
-  }, [questions, searchTerm, activeCategory]);
+  }, [questions, magicTopic, activeCategory]);
 
   useEffect(() => {
     if (!selectedQuestion && questions.length > 0) {
@@ -107,11 +103,6 @@ function App() {
   useEffect(() => {
     storageService.setLanguage(lang);
   }, [lang]);
-
-  const showToast = useCallback((message: string, type: 'success' | 'error' | 'delete' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
 
   const handleRefreshStats = useCallback(() => {
     const s = storageService.getStats();
@@ -133,29 +124,29 @@ function App() {
       name: versionName
     });
     handleRefreshStats();
-    setShowSuccess(true);
+    setFeedback({ message: 'SAVED ✨', type: 'success' });
   };
 
   const handleTestConnection = async () => {
     if (!stats.aiConfig?.apiKey) {
-      showToast(lang === 'zh' ? '请先填写 API Key' : 'Fill API Key first', 'error');
+      setFeedback({ message: lang === 'zh' ? '请填写 API Key' : 'Fill API Key', type: 'error' });
       return;
     }
     setTestStatus('testing');
     const result = await aiService.testConnection(stats.aiConfig);
     if (result) {
       setTestStatus('success');
-      setShowSuccess(true);
+      setFeedback({ message: 'CONNECTED ✨', type: 'success' });
     } else {
       setTestStatus('failed');
-      showToast(t.testFailed, 'error');
+      setFeedback({ message: t.testFailed, type: 'error' });
     }
     setTimeout(() => setTestStatus('idle'), 3000);
   };
 
   const handleManualSave = () => {
     if (!newQuestion.title || !newQuestion.description) {
-      showToast(lang === 'zh' ? '请填写完整标题和描述' : 'Please fill title and description', 'error');
+      setFeedback({ message: lang === 'zh' ? '标题和描述必填' : 'Title & Desc Required', type: 'error' });
       return;
     }
     const q: Question = {
@@ -173,7 +164,7 @@ function App() {
     handleRefreshStats();
     setSelectedQuestion(q);
     setShowManualAdd(false);
-    setShowSuccess(true);
+    setFeedback({ message: 'CREATED ✨', type: 'success' });
     
     setNewQuestion({
       title: '',
@@ -186,6 +177,17 @@ function App() {
     });
   };
 
+  const handleImportSuccess = (count: number) => {
+    handleRefreshStats();
+    setFeedback({ message: `${count} IMPORTED ✨`, type: 'success' });
+    const updated = storageService.getQuestions();
+    if (updated.length > 0) setSelectedQuestion(updated[0]);
+  };
+
+  const handleImportFailure = (msg: string) => {
+    setFeedback({ message: msg, type: 'error' });
+  };
+
   const handleDeleteQuestion = useCallback((id: string) => {
     if (confirm(t.deleteConfirm)) {
       storageService.deleteQuestion(id);
@@ -195,26 +197,9 @@ function App() {
       if (selectedQuestion?.id === id) {
         setSelectedQuestion(updated.length > 0 ? updated[0] : null);
       }
-      showToast(lang === 'zh' ? '挑战已删除' : 'Challenge deleted', 'delete');
+      setFeedback({ message: 'DELETED 🗑️', type: 'success' });
     }
-  }, [selectedQuestion, t.deleteConfirm, lang, showToast, handleRefreshStats]);
-
-  const selectSupportOption = (amount: number) => {
-    setSelectedSupportAmount(amount);
-    setSupportStep('pay');
-    confetti({
-      particleCount: 80,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#ffb6c1', '#ffc0cb', '#ff69b4']
-    });
-  };
-
-  const closeModalOnBackdrop = (e: React.MouseEvent, closeFn: () => void) => {
-    if (e.target === e.currentTarget) {
-      closeFn();
-    }
-  };
+  }, [selectedQuestion, t.deleteConfirm, handleRefreshStats]);
 
   const handleMagicGenerate = async () => {
     if (!magicTopic.trim()) return;
@@ -225,29 +210,43 @@ function App() {
       handleRefreshStats();
       setSelectedQuestion(q);
       setMagicTopic('');
-      setShowSuccess(true);
+      setFeedback({ message: 'GENERATED ✨', type: 'success' });
     } catch (e) {
-      showToast(t.magicFail, 'error');
+      setFeedback({ message: t.magicFail, type: 'error' });
     }
     setIsGenerating(false);
+  };
+
+  const [manualTab, setManualTab] = useState<'info' | 'react' | 'vue'>('info');
+  const [newQuestion, setNewQuestion] = useState<Partial<Question>>({
+    title: '',
+    difficulty: Difficulty.EASY,
+    category: '',
+    description: '',
+    react: { initial: DEFAULT_REACT_INITIAL, solution: '' },
+    vue: { initial: DEFAULT_VUE_INITIAL, solution: '' },
+    tags: []
+  });
+
+  const closeModalOnBackdrop = (e: React.MouseEvent, closeFn: () => void) => {
+    if (e.target === e.currentTarget) {
+      closeFn();
+    }
   };
 
   return (
     <div className="flex h-screen w-screen bg-[#fffafa] text-gray-800 p-4 gap-4 overflow-hidden fixed inset-0 font-['Quicksand']">
       
-      {showSuccess && <SuccessAnimation onComplete={() => setShowSuccess(false)} />}
+      {feedback && <FeedbackAnimation message={feedback.message} type={feedback.type} onComplete={() => setFeedback(null)} />}
 
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-2xl shadow-xl border animate-toast-in ${
-          toast.type === 'success' ? 'bg-white text-pink-500 border-pink-100' : 
-          toast.type === 'delete' ? 'bg-gray-800 text-white border-gray-700' : 'bg-red-50 text-red-500 border-red-100'
-        }`}>
-          <span className="text-sm font-bold">{toast.message}</span>
-        </div>
-      )}
+      <ImportModal 
+        isOpen={showImport} 
+        onClose={() => setShowImport(false)} 
+        onSuccess={handleImportSuccess}
+        onFailure={handleImportFailure}
+        lang={lang}
+      />
 
-      {/* Sidebar */}
       <aside className="w-84 bg-white border border-pink-50 flex flex-col shadow-xl rounded-[2.5rem] overflow-hidden shrink-0">
         <div className="p-6 border-b border-pink-50 flex items-center shrink-0">
           <div className="flex items-center gap-2">
@@ -258,15 +257,6 @@ function App() {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
           <div className="space-y-3">
-            <div className="relative">
-              <input 
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                placeholder={t.searchPlaceholder}
-                className="w-full bg-pink-50/20 border border-pink-100 rounded-xl pl-9 pr-4 py-2.5 text-xs outline-none focus:ring-2 ring-pink-100 transition shadow-inner"
-              />
-              <span className="absolute left-3.5 top-3.5 text-pink-200 text-xs">🔍</span>
-            </div>
             <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar scroll-smooth">
               {categories.map(cat => (
                 <button
@@ -300,12 +290,20 @@ function App() {
                 {isGenerating ? '...' : '🪄'}
               </button>
             </div>
-            <button 
-              onClick={() => { setShowManualAdd(true); setManualTab('info'); }}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-white border-2 border-dashed border-gray-100 text-gray-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:border-pink-200 hover:text-pink-400 transition-all active:scale-95 shadow-sm"
-            >
-              <span className="text-base font-normal">+</span> {t.manualAdd}
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => { setShowManualAdd(true); setManualTab('info'); }}
+                className="flex-1 flex items-center justify-center gap-1 py-3 bg-white border-2 border-dashed border-gray-100 text-gray-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:border-pink-200 hover:text-pink-400 transition-all active:scale-95 shadow-sm"
+              >
+                <span className="text-base font-normal">+</span> {lang === 'zh' ? '新建' : 'New'}
+              </button>
+              <button 
+                onClick={() => setShowImport(true)}
+                className="flex-1 flex items-center justify-center gap-1 py-3 bg-white border-2 border-dashed border-gray-100 text-gray-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:border-blue-200 hover:text-blue-400 transition-all active:scale-95 shadow-sm"
+              >
+                <span className="text-base font-normal">📂</span> {lang === 'zh' ? '导入' : 'Import'}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -335,7 +333,6 @@ function App() {
                       }`}>
                         {t.difficulty[q.difficulty]}
                       </span>
-                      <span className="text-[8px] text-gray-400 font-bold uppercase tracking-widest">{q.category}</span>
                     </div>
                   </button>
                 ))}
@@ -343,18 +340,8 @@ function App() {
             )}
           </div>
         </div>
-
-        <div className="p-6 border-t border-pink-50 shrink-0">
-          <button 
-            onClick={() => { setShowSupport(true); setSupportStep('select'); }}
-            className="w-full flex items-center justify-center gap-2 py-4 bg-pink-500 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest hover:bg-pink-600 transition-all active:scale-95 shadow-lg shadow-pink-100"
-          >
-            <span className="text-lg">☕</span> {t.buyMeCoffee}
-          </button>
-        </div>
       </aside>
 
-      {/* Main Panel Content */}
       <main className="flex-1 flex flex-col gap-4 overflow-hidden min-w-0">
         <header className="bg-white h-20 px-8 rounded-[2rem] shadow-sm border border-pink-50 flex items-center justify-between shrink-0">
           <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100 shadow-inner">
@@ -363,19 +350,12 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="hidden lg:flex flex-col items-end mr-2">
-              <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest leading-none mb-1">{t.mastery}</span>
-              <span className="text-sm font-black text-pink-500">{questions.length > 0 ? Math.round((stats.solvedCount / questions.length) * 100) : 0}%</span>
-            </div>
-            
             <button onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')} className="w-12 h-12 border border-pink-100 text-pink-400 rounded-xl text-[10px] font-black hover:bg-pink-50 transition uppercase shadow-sm">
               {lang}
             </button>
-
             <button 
               onClick={() => setShowSettings(true)}
               className="w-12 h-12 rounded-xl bg-pink-50 flex items-center justify-center hover:bg-pink-100 transition shadow-sm border border-pink-100 text-pink-400"
-              title={t.settings}
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             </button>
@@ -386,15 +366,15 @@ function App() {
           {view === 'editor' && selectedQuestion ? (
             <div className="h-full flex flex-col gap-4 animate-fade-in overflow-hidden">
               <div className="bg-white p-6 px-8 rounded-[2rem] border border-pink-50 flex items-center justify-between shadow-sm shrink-0">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 mb-1">
+                <div className="flex-1 min-w-0 pr-6">
+                  <div className="flex items-center gap-3 mb-2">
                     <h2 className="text-xl font-black text-gray-800 truncate tracking-tight">{selectedQuestion.title}</h2>
                     <span className="text-[9px] px-2 py-0.5 bg-pink-50 text-pink-400 rounded-md font-black uppercase tracking-widest">{selectedQuestion.category}</span>
                   </div>
-                  <p className="text-[11px] text-gray-400 line-clamp-1 font-medium">{selectedQuestion.description}</p>
+                  <MarkdownViewer content={selectedQuestion.description} />
                 </div>
                 
-                <div className="flex items-center gap-4 ml-4">
+                <div className="flex items-center gap-4 ml-4 shrink-0 self-start">
                   <div className="flex bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner">
                     <button onClick={() => setFramework('react')} className={`px-5 py-1.5 rounded-lg text-[10px] font-black transition-all ${framework === 'react' ? 'bg-white text-blue-500 shadow-sm' : 'text-gray-400'}`}>REACT</button>
                     <button onClick={() => setFramework('vue')} className={`px-5 py-1.5 rounded-lg text-[10px] font-black transition-all ${framework === 'vue' ? 'bg-white text-green-500 shadow-sm' : 'text-gray-400'}`}>VUE</button>
@@ -424,13 +404,12 @@ function App() {
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-gray-200 animate-fade-in opacity-50">
               <span className="text-7xl mb-6">🍭</span>
-              <p className="text-sm font-black uppercase tracking-[0.2em]">{lang === 'zh' ? '请选择一个挑战开始练习' : 'Select a challenge to start'}</p>
+              <p className="text-sm font-black uppercase tracking-[0.2em]">{lang === 'zh' ? '请选择一个挑战' : 'Select a challenge'}</p>
             </div>
           )}
         </div>
       </main>
 
-      {/* Manual Create Modal */}
       {showManualAdd && (
         <div 
           className="fixed inset-0 bg-pink-900/10 backdrop-blur-md z-[150] flex items-center justify-center p-6 animate-fade-in"
@@ -440,7 +419,7 @@ function App() {
               <button onClick={() => setShowManualAdd(false)} className="absolute top-8 right-10 w-10 h-10 flex items-center justify-center text-gray-300 hover:text-pink-400 transition-colors bg-gray-50 rounded-2xl">✕</button>
               <h2 className="text-2xl font-black text-gray-800 mb-8 tracking-tighter">{t.addChallenge}</h2>
               <div className="flex gap-2 mb-8 bg-gray-50 p-1.5 rounded-2xl shrink-0 shadow-inner">
-                <button onClick={() => setManualTab('info')} className={`flex-1 py-3 rounded-xl text-[11px] font-black transition-all ${manualTab === 'info' ? 'bg-white text-pink-500 shadow-md' : 'text-gray-400'}`}>1. {lang === 'zh' ? '基础信息' : 'INFO'}</button>
+                <button onClick={() => setManualTab('info')} className={`flex-1 py-3 rounded-xl text-[11px] font-black transition-all ${manualTab === 'info' ? 'bg-white text-pink-500 shadow-md' : 'text-gray-400'}`}>1. {lang === 'zh' ? '信息' : 'INFO'}</button>
                 <button onClick={() => setManualTab('react')} className={`flex-1 py-3 rounded-xl text-[11px] font-black transition-all ${manualTab === 'react' ? 'bg-white text-blue-500 shadow-md' : 'text-gray-400'}`}>2. REACT</button>
                 <button onClick={() => setManualTab('vue')} className={`flex-1 py-3 rounded-xl text-[11px] font-black transition-all ${manualTab === 'vue' ? 'bg-white text-green-500 shadow-md' : 'text-gray-400'}`}>3. VUE</button>
               </div>
@@ -467,19 +446,17 @@ function App() {
                     </div>
                     <div className="space-y-3">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t.formDesc}</label>
-                      <textarea value={newQuestion.description} onChange={e => setNewQuestion(p => ({ ...p, description: e.target.value }))} rows={6} className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-300 transition-all resize-none" />
+                      <textarea placeholder="Markdown supported..." value={newQuestion.description} onChange={e => setNewQuestion(p => ({ ...p, description: e.target.value }))} rows={6} className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-300 transition-all resize-none font-mono" />
                     </div>
                   </div>
                 )}
                 {manualTab === 'react' && (
                   <div className="animate-fade-in">
-                    <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest ml-1 mb-3 block">Initial React Template</label>
                     <textarea value={newQuestion.react?.initial} onChange={e => setNewQuestion(p => ({ ...p, react: { ...p.react!, initial: e.target.value } }))} rows={12} className="w-full bg-gray-900 text-pink-50 font-mono rounded-2xl px-6 py-5 text-xs outline-none shadow-2xl" />
                   </div>
                 )}
                 {manualTab === 'vue' && (
                   <div className="animate-fade-in">
-                    <label className="text-[10px] font-black text-green-400 uppercase tracking-widest ml-1 mb-3 block">Initial Vue SFC Template</label>
                     <textarea value={newQuestion.vue?.initial} onChange={e => setNewQuestion(p => ({ ...p, vue: { ...p.vue!, initial: e.target.value } }))} rows={12} className="w-full bg-gray-900 text-green-50 font-mono rounded-2xl px-6 py-5 text-xs outline-none shadow-2xl" />
                   </div>
                 )}
@@ -492,52 +469,6 @@ function App() {
         </div>
       )}
 
-      {/* Support Modal */}
-      {showSupport && (
-        <div 
-          className="fixed inset-0 bg-pink-900/10 backdrop-blur-md z-[180] flex items-center justify-center p-6 animate-fade-in"
-          onClick={(e) => closeModalOnBackdrop(e, () => setShowSupport(false))}
-        >
-           <div className="bg-white rounded-[3rem] p-10 shadow-2xl border border-pink-100 max-sm:w-full max-w-sm text-center relative overflow-hidden flex flex-col items-center animate-sweet-pop" onClick={e => e.stopPropagation()}>
-              <button onClick={() => setShowSupport(false)} className="absolute top-6 right-8 text-gray-300 hover:text-pink-400 text-xl font-bold transition-colors">✕</button>
-              
-              {supportStep === 'select' ? (
-                <div className="animate-fade-in w-full">
-                  <div className="text-5xl mb-6 animate-bounce">🧁</div>
-                  <h2 className="text-xl font-black text-gray-800 mb-2">{t.supportTitle}</h2>
-                  <p className="text-gray-400 text-[10px] mb-8 font-bold uppercase tracking-widest">{t.donationOptions}</p>
-                  
-                  <div className="space-y-3">
-                    <button onClick={() => selectSupportOption(10)} className="w-full flex items-center justify-between px-6 py-4 bg-pink-50 rounded-2xl border-2 border-transparent hover:border-pink-200 transition-all group active:scale-95">
-                      <div className="flex items-center gap-3"><span className="text-2xl group-hover:rotate-12 transition-transform">🧋</span><span className="text-xs font-black text-gray-700">{t.coffee}</span></div>
-                      <span className="text-sm font-black text-pink-500">￥10</span>
-                    </button>
-                    <button onClick={() => selectSupportOption(20)} className="w-full flex items-center justify-between px-6 py-4 bg-pink-50 rounded-2xl border-2 border-transparent hover:border-pink-200 transition-all group active:scale-95">
-                      <div className="flex items-center gap-3"><span className="text-2xl group-hover:rotate-12 transition-transform">🍰</span><span className="text-xs font-black text-gray-700">{t.cupcake}</span></div>
-                      <span className="text-sm font-black text-pink-500">￥20</span>
-                    </button>
-                    <button onClick={() => selectSupportOption(50)} className="w-full flex items-center justify-between px-6 py-4 bg-pink-50 rounded-2xl border-2 border-transparent hover:border-pink-200 transition-all group active:scale-95">
-                      <div className="flex items-center gap-3"><span className="text-2xl group-hover:rotate-12 transition-transform">🍲</span><span className="text-xs font-black text-gray-700">{t.iceCream}</span></div>
-                      <span className="text-sm font-black text-pink-500">￥50</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="animate-fade-in w-full flex flex-col items-center py-4">
-                  <h3 className="text-lg font-black text-gray-800 mb-6">{t.scanPrompt}</h3>
-                  <div className="w-48 h-48 bg-gray-50 rounded-3xl border-4 border-pink-100 flex flex-col items-center justify-center mb-6 relative overflow-hidden group">
-                     <div className="grid grid-cols-4 gap-2 opacity-20">{Array.from({length: 16}).map((_, i) => (<div key={i} className={`w-6 h-6 rounded-sm ${Math.random() > 0.5 ? 'bg-pink-400' : 'bg-pink-100'}`} />))}</div>
-                     <span className="absolute inset-0 flex items-center justify-center text-4xl group-hover:scale-125 transition-transform">📱</span>
-                  </div>
-                  <p className="text-[10px] font-black text-pink-400 uppercase tracking-[0.2em] mb-8">{t.thankYou}</p>
-                  <button onClick={() => setSupportStep('select')} className="text-[9px] font-black text-gray-400 uppercase tracking-widest hover:text-pink-400 transition-colors underline">← {lang === 'zh' ? '重新选择' : 'Back'}</button>
-                </div>
-              )}
-           </div>
-        </div>
-      )}
-
-      {/* Settings Modal */}
       {showSettings && (
         <div 
           className="fixed inset-0 bg-pink-900/10 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-fade-in"
@@ -552,20 +483,6 @@ function App() {
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-10">
               <div className="space-y-6">
                 <p className="text-[10px] font-black text-pink-400 uppercase tracking-widest ml-1">{t.profile}</p>
-                <div className="space-y-4">
-                  <label className="text-[10px] font-black text-gray-400 block uppercase tracking-widest ml-1">Avatar</label>
-                  <div className="flex flex-wrap gap-3">
-                    {['🍭', '🧁', '🍦', '🍩', '🍪', '🍰', '🍓', '🍑', '🍒', '🍉', '🍋', '🥑'].map(icon => (
-                      <button 
-                        key={icon} 
-                        onClick={() => { storageService.saveProfile({ ...stats.profile!, avatar: icon }); handleRefreshStats(); }} 
-                        className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl border-2 transition-all ${stats.profile?.avatar === icon ? 'border-pink-300 bg-pink-50 shadow-md scale-110' : 'border-gray-50 hover:border-pink-100'}`}
-                      >
-                        {icon}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div>
                   <label className="text-[10px] font-black text-gray-400 block mb-3 uppercase tracking-widest ml-1">{t.userName}</label>
                   <input 
@@ -605,15 +522,6 @@ function App() {
                       {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </div>
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Model Name</label>
-                    <input 
-                      placeholder="e.g. gpt-4, gemini-pro..."
-                      defaultValue={stats.aiConfig?.model}
-                      onBlur={e => { storageService.saveAIConfig({ ...stats.aiConfig!, model: e.target.value }); handleRefreshStats(); }}
-                      className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-200"
-                    />
-                  </div>
                 </div>
                 <div className="space-y-3">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">API Key</label>
@@ -622,15 +530,6 @@ function App() {
                     placeholder="sk-..."
                     defaultValue={stats.aiConfig?.apiKey}
                     onBlur={e => { storageService.saveAIConfig({ ...stats.aiConfig!, apiKey: e.target.value }); handleRefreshStats(); }}
-                    className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-200"
-                  />
-                </div>
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Base URL (Optional)</label>
-                  <input 
-                    placeholder="https://api.openai.com/v1"
-                    defaultValue={stats.aiConfig?.baseUrl}
-                    onBlur={e => { storageService.saveAIConfig({ ...stats.aiConfig!, baseUrl: e.target.value }); handleRefreshStats(); }}
                     className="w-full bg-pink-50/20 border border-pink-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner focus:border-pink-200"
                   />
                 </div>
@@ -647,7 +546,7 @@ function App() {
             </div>
 
             <div className="mt-8 pt-6 border-t border-pink-50 flex justify-center shrink-0">
-               <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Codeling v2.0 - Made with ❤️</p>
+               <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Codeling v2.2 - Made with ❤️</p>
             </div>
           </div>
         </div>

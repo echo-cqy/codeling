@@ -84,19 +84,54 @@ export const playgroundService = {
           <body>
             <div id="app"></div>
             <script>
-              const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } = Vue;
+              const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide, inject } = Vue;
+              
+              // Enhanced Vue SFC Macros Mock
+              window.defineProps = (config) => {
+                const p = {};
+                if (Array.isArray(config)) {
+                  config.forEach(key => p[key] = undefined);
+                } else if (typeof config === 'object') {
+                  Object.keys(config).forEach(key => {
+                    const val = config[key];
+                    // Handle default values if provided: defineProps({ data: { default: () => [] } })
+                    if (val && typeof val === 'object' && 'default' in val) {
+                      p[key] = typeof val.default === 'function' ? val.default() : val.default;
+                    } else {
+                      p[key] = undefined;
+                    }
+                  });
+                }
+                return reactive(p);
+              };
+              
+              window.defineEmits = () => (event, ...args) => console.log('Emitted:', event, args);
+              window.defineExpose = () => {};
+              window.defineOptions = () => {};
+              window.defineSlots = () => ({});
+              window.defineModel = () => ref();
+
               try {
                 const App = {
                   template: \`${escapeJS(template)}\`,
                   setup() {
-                    ${script.replace(/import .* from .*/g, '')}
+                    const __script = \`${escapeJS(script.replace(/import .* from .*/g, ''))}\`;
                     
+                    // Re-run the script in the setup context and try to capture variables
+                    eval(__script);
+
                     const __context = {};
-                    const __scriptStr = \`${escapeJS(script)}\`;
-                    const __varMatches = __scriptStr.matchAll(/(?:const|let|var|function)\s+([a-zA-Z0-9_$]+)/g);
-                    for (const m of __varMatches) {
-                       try { __context[m[1]] = eval(m[1]); } catch(e) {}
+                    // Match top-level variable and function declarations
+                    const __declarations = __script.matchAll(/(?:const|let|var|function)\\s+([a-zA-Z0-9_$]+)/g);
+                    for (const m of __declarations) {
+                      const name = m[1];
+                      try {
+                        if (eval('typeof ' + name) !== 'undefined') {
+                          __context[name] = eval(name);
+                        }
+                      } catch(e) {}
                     }
+                    
                     return __context;
                   }
                 };

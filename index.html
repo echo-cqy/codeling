@@ -86,14 +86,66 @@
           stroke-dashoffset: 48;
           animation: check-draw 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards;
         }
+
+        /* Failure Cross Animation */
+        @keyframes cross-draw {
+          from { stroke-dashoffset: 50; }
+          to { stroke-dashoffset: 0; }
+        }
+        .failure-cross circle {
+          stroke-dasharray: 166;
+          stroke-dashoffset: 166;
+          stroke-width: 2;
+          stroke: #ef4444;
+          fill: none;
+          animation: circle-draw 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+        }
+        .failure-cross path {
+          stroke-dasharray: 50;
+          stroke-dashoffset: 50;
+          animation: cross-draw 0.4s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards;
+        }
+
         .success-bg {
           animation: success-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+        
+        /* Markdown Styles */
+        .markdown-body h1 { font-size: 1.5em; font-weight: 700; margin-bottom: 0.5em; color: #db2777; }
+        .markdown-body h2 { font-size: 1.25em; font-weight: 600; margin-top: 1em; margin-bottom: 0.5em; color: #db2777; }
+        .markdown-body h3 { font-size: 1.1em; font-weight: 600; margin-top: 0.8em; margin-bottom: 0.4em; }
+        .markdown-body p { margin-bottom: 0.8em; line-height: 1.6; }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .markdown-body code { background-color: #fce7f3; color: #db2777; padding: 0.2em 0.4em; border-radius: 0.3em; font-family: 'Fira Code', monospace; font-size: 0.9em; }
+        .markdown-body pre { background-color: #f8fafc; padding: 1em; border-radius: 0.5em; overflow-x: auto; margin-bottom: 1em; border: 1px solid #e2e8f0; }
+        .markdown-body pre code { background-color: transparent; color: inherit; padding: 0; }
+        .markdown-body blockquote { border-left: 4px solid #fbcfe8; padding-left: 1em; color: #64748b; margin-left: 0; margin-bottom: 1em; }
+        .markdown-body a { color: #ec4899; text-decoration: underline; }
+
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-5px); }
+          75% { transform: translateX(5px); }
+        }
+        .animate-shake {
+          animation: shake 0.3s ease-in-out infinite;
         }
     </style>
     <!-- Monaco Editor Loader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
-<!-- Load the app entry via Vite. Removed importmap to ensure Vite resolves deps from node_modules. -->
-<script type="module" src="/index.tsx"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@^1.9.3",
+    "marked": "https://esm.sh/marked@12.0.0"
+  }
+}
+</script>
 </head>
 <body>
     <div id="root"></div>
