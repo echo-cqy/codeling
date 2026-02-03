@@ -10,8 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "install:check": "npm install --force"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@babel/standalone": "^7.29.0",

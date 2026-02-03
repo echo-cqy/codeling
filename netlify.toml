@@ -1,5 +1,7 @@
+# Netlify Build Configuration
+
 [build]
-  command = "npm ci && npm run build"
+  command = "npm install && npm run build"
   publish = "dist"
 
 [build.environment]
@@ -22,3 +24,10 @@
 
 [build.processing.images]
   compress = true
+
+# Build plugins configuration
+[[plugins]]
+  package = "@netlify/plugin-cache"
+
+[[plugins]]
+  package = "@netlify/plugin-local-install-core"
