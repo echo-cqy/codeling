@@ -5,7 +5,8 @@
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "20"
+  NPM_VERSION = "10"
 
 [build.processing]
   skip_processing = false
@@ -23,10 +24,3 @@
 
 [build.processing.images]
   compress = true
-
-# Build plugins configuration
-[[plugins]]
-  package = "@netlify/plugin-cache"
-
-[[plugins]]
-  package = "@netlify/plugin-local-install-core"
