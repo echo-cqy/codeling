@@ -33,6 +33,17 @@ export interface Question {
   vue: QuestionCode;
   isStarred?: boolean;
   createdAt: number;
+  // 新增字段：支持内容修改
+  originalDescription?: string;
+  originalReact?: QuestionCode;
+  originalVue?: QuestionCode;
+}
+
+export interface QuestionStats {
+  questionId: string;
+  completedCount: number;
+  hasCompleted: boolean;
+  isStarred: boolean;
 }
 
 export interface Attempt {

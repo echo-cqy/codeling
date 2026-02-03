@@ -14,6 +14,8 @@ import EditorPane from "./components/EditorPane";
 import StatsView from "./components/StatsView";
 import MarkdownViewer from "./components/MarkdownViewer";
 import ImportModal from "./components/ImportModal";
+import QuestionList from "./components/QuestionList";
+import QuestionEditModal from "./components/QuestionEditModal";
 import { translations } from "./i18n";
 
 const DEFAULT_REACT_INITIAL = `import React from 'react';\n\nexport default function App() {\n  return (\n    <div className="p-10">\n      <h1 className="text-2xl font-bold text-pink-500">Hello React</h1>\n    </div>\n  );\n}`;
@@ -107,6 +109,9 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showQuestionEdit, setShowQuestionEdit] = useState(false);
+  const [selectedQuestionForEdit, setSelectedQuestionForEdit] =
+    useState<Question | null>(null);
   const [feedback, setFeedback] = useState<{
     message: string;
     type: "success" | "error";
@@ -115,7 +120,10 @@ function App() {
     "idle" | "testing" | "success" | "failed"
   >("idle");
 
-  const t = translations[lang];
+  const t = translations[lang] || translations["en"];
+  if (!t) {
+    return <div>Language error</div>;
+  }
 
   const categories = useMemo(() => {
     const cats = new Set(questions.map((q) => q.category));
@@ -151,6 +159,50 @@ function App() {
     setQuestions(q);
     return { s, q };
   }, []);
+
+  const handleDeleteAttempt = useCallback(
+    (id: string) => {
+      storageService.deleteAttempt(id);
+      handleRefreshStats();
+      setFeedback({ message: "DELETED ✨", type: "success" });
+    },
+    [handleRefreshStats],
+  );
+
+  const handleEditQuestion = (question: Question) => {
+    setSelectedQuestionForEdit(question);
+    setShowQuestionEdit(true);
+  };
+
+  const handleUpdateQuestion = (
+    questionId: string,
+    updates: Partial<Pick<Question, "description" | "react" | "vue">>,
+  ) => {
+    const updatedQuestion = storageService.updateQuestionContent(
+      questionId,
+      updates,
+    );
+    if (updatedQuestion) {
+      setQuestions((prev) =>
+        prev.map((q) => (q.id === questionId ? updatedQuestion : q)),
+      );
+      setFeedback({ message: "QUESTION UPDATED ✨", type: "success" });
+    } else {
+      setFeedback({ message: "UPDATE FAILED ❌", type: "error" });
+    }
+  };
+
+  const handleClearListStats = (questionIds: string[]) => {
+    storageService.clearQuestionListStats(questionIds);
+    handleRefreshStats();
+    setFeedback({ message: "LIST STATS CLEARED ✨", type: "success" });
+  };
+
+  const handleResetListStats = (questionIds: string[]) => {
+    storageService.resetQuestionListStats(questionIds);
+    handleRefreshStats();
+    setFeedback({ message: "LIST STATS RESET ✨", type: "success" });
+  };
 
   const handleSave = (code: string, versionName?: string) => {
     if (!selectedQuestion) return;
@@ -339,23 +391,16 @@ function App() {
 
           <div className="bg-gray-50/50 p-4 rounded-[2rem] border border-gray-100 space-y-3">
             <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest px-1">
-              {t.aiCreator}
+              {t.searchPlaceholder}
             </p>
             <div className="relative">
               <input
                 value={magicTopic}
                 onChange={(e) => setMagicTopic(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleMagicGenerate()}
-                placeholder={t.magicPlaceholder}
+                placeholder={t.searchPlaceholder}
                 className="w-full bg-white border border-gray-100 rounded-xl px-4 py-3 text-[10px] outline-none focus:ring-2 ring-pink-100 transition shadow-sm"
               />
-              <button
-                onClick={handleMagicGenerate}
-                disabled={isGenerating}
-                className="absolute right-1.5 top-1.5 w-8 h-8 bg-pink-400 text-white rounded-lg flex items-center justify-center hover:bg-pink-500 transition disabled:opacity-50"
-              >
-                {isGenerating ? "..." : "🪄"}
-              </button>
+              <span className="absolute right-4 top-3.5 opacity-20">🔍</span>
             </div>
             <div className="flex gap-2">
               <button
@@ -379,51 +424,42 @@ function App() {
           </div>
 
           <div className="space-y-4">
-            <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest px-1">
-              {t.challenges}
-            </p>
-            {filteredQuestions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 opacity-30">
-                <span className="text-3xl mb-2">🍪</span>
-                <p className="text-[9px] font-black uppercase tracking-widest">
-                  {t.noResults}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredQuestions.map((q) => (
-                  <button
-                    key={q.id}
-                    onClick={() => {
-                      setSelectedQuestion(q);
-                      setView("editor");
-                    }}
-                    className={`w-full text-left p-4 rounded-2xl transition-all border-2 ${
-                      selectedQuestion?.id === q.id
-                        ? "border-pink-200 bg-pink-50/30 scale-[1.02] shadow-sm"
-                        : "border-transparent bg-gray-50/30 hover:bg-gray-50"
-                    }`}
-                  >
-                    <div className="font-bold text-gray-700 text-sm mb-2 line-clamp-1">
-                      {q.title}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[8px] px-1.5 py-0.5 rounded font-black uppercase ${
-                          q.difficulty === Difficulty.EASY
-                            ? "bg-green-100 text-green-600"
-                            : q.difficulty === Difficulty.MEDIUM
-                              ? "bg-orange-100 text-orange-600"
-                              : "bg-red-100 text-red-600"
-                        }`}
-                      >
-                        {t.difficulty[q.difficulty]}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex items-center justify-between px-1">
+              <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
+                {t.challenges}
+              </p>
+              {filteredQuestions.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (
+                      confirm(
+                        lang === "zh"
+                          ? "确定要清除当前列表下题目的所有练习记录吗？(不影响时间轴)"
+                          : "Clear all practice stats for current list? (Timeline will be kept)",
+                      )
+                    ) {
+                      handleClearListStats(filteredQuestions.map((q) => q.id));
+                    }
+                  }}
+                  className="text-[8px] font-black text-pink-300 hover:text-pink-500 uppercase tracking-widest transition-colors"
+                  title={t.clearListStats}
+                >
+                  {t.clearListStats}
+                </button>
+              )}
+            </div>
+            <QuestionList
+              questions={filteredQuestions}
+              selectedQuestion={selectedQuestion}
+              onSelectQuestion={(q) => {
+                setSelectedQuestion(q);
+                setView("editor");
+              }}
+              onEditQuestion={handleEditQuestion}
+              onRefresh={handleRefreshStats}
+              lang={lang}
+              framework={framework}
+            />
           </div>
         </div>
       </aside>
@@ -885,6 +921,16 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Question Edit Modal */}
+      {showQuestionEdit && selectedQuestionForEdit && (
+        <QuestionEditModal
+          question={selectedQuestionForEdit}
+          onUpdate={handleUpdateQuestion}
+          onClose={() => setShowQuestionEdit(false)}
+          lang={lang}
+        />
       )}
     </div>
   );

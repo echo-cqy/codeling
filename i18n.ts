@@ -1,4 +1,3 @@
-
 export const translations = {
   en: {
     workshop: "Workshop",
@@ -37,7 +36,7 @@ export const translations = {
     difficulty: {
       Easy: "Easy",
       Medium: "Medium",
-      Hard: "Hard"
+      Hard: "Hard",
     },
     editQuestion: "Edit Challenge",
     saveChanges: "Save Changes",
@@ -66,7 +65,8 @@ export const translations = {
     welcomeBack: "Welcome back,",
     buyMeCoffee: "Buy me a coffee",
     supportTitle: "Support Codeling",
-    supportDesc: "If this tool helped you prepare for your interview, consider buying me a sweet treat! 🧁",
+    supportDesc:
+      "If this tool helped you prepare for your interview, consider buying me a sweet treat! 🧁",
     donationOptions: "Scan with Alipay:",
     coffee: "Tea",
     cupcake: "Cake",
@@ -76,7 +76,22 @@ export const translations = {
     testConnection: "Test Connection",
     testing: "Testing...",
     testSuccess: "Connection Successful! ✨",
-    testFailed: "Connection Failed. Check config."
+    testFailed: "Connection Failed. Check config.",
+    // 新增翻译
+    attempts: "attempts",
+    star: "Star",
+    unstar: "Unstar",
+    clearListStats: "Clear List Stats",
+    resetListStats: "Reset List Stats",
+    noQuestionsFound: "No questions found",
+    description: "Description",
+    originalDescription: "Original Description",
+    originalCode: "Original Code",
+    codePlaceholder: "Enter code here...",
+    descriptionPlaceholder: "Enter description here...",
+    reset: "Reset",
+    restoreOriginal: "Restore Original",
+    cancel: "Cancel",
   },
   zh: {
     workshop: "编程坊",
@@ -115,7 +130,7 @@ export const translations = {
     difficulty: {
       Easy: "简单",
       Medium: "中等",
-      Hard: "困难"
+      Hard: "困难",
     },
     editQuestion: "修改题目",
     saveChanges: "保存修改",
@@ -144,7 +159,8 @@ export const translations = {
     welcomeBack: "欢迎回来，",
     buyMeCoffee: "请我喝杯咖啡",
     supportTitle: "支持 Codeling",
-    supportDesc: "如果这个工具对你有帮助，欢迎请作者喝杯奶茶或吃顿火锅！你的支持是我更新的最大动力 🧁",
+    supportDesc:
+      "如果这个工具对你有帮助，欢迎请作者喝杯奶茶或吃顿火锅！你的支持是我更新的最大动力 🧁",
     donationOptions: "请选择你的心意:",
     coffee: "奶茶",
     cupcake: "蛋糕",
@@ -154,6 +170,21 @@ export const translations = {
     testConnection: "测试连通性",
     testing: "测试中...",
     testSuccess: "连接成功！✨",
-    testFailed: "连接失败，请检查配置。"
-  }
+    testFailed: "连接失败，请检查配置。",
+    // 新增翻译
+    attempts: "次",
+    star: "标星",
+    unstar: "取消标星",
+    clearListStats: "清除列表统计",
+    resetListStats: "重置列表统计",
+    noQuestionsFound: "未找到题目",
+    description: "描述",
+    originalDescription: "原始描述",
+    originalCode: "原始代码",
+    codePlaceholder: "在此输入代码...",
+    descriptionPlaceholder: "在此输入描述...",
+    reset: "重置",
+    restoreOriginal: "恢复原始",
+    cancel: "取消",
+  },
 };
