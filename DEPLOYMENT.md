@@ -12,6 +12,7 @@
 4. 点击 **Clear cache and retry deploy**
 
 或者使用命令行：
+
 ```bash
 netlify deploy --clear-cache
 ```
@@ -20,12 +21,13 @@ netlify deploy --clear-cache
 
 - Node.js 版本: 20.x
 - 包管理器: npm (Node.js 20 自带的 npm 10.8.2)
-- 构建命令: `npm install && npm run build`
+- 构建命令: `rm -rf node_modules && npm install && npm run build`
 - 发布目录: `dist`
 
 ### 环境变量
 
 需要在 Netlify Dashboard 中配置：
+
 - `GEMINI_API_KEY`: 你的 Google Gemini API Key
 
 ### 常见问题
@@ -35,10 +37,21 @@ netlify deploy --clear-cache
 **原因**: Netlify 缓存导致 npm 版本冲突
 
 **解决方案**:
+
 1. 确保 `package.json` 中只有 `"node": "20.x"`，没有 npm 版本限制
 2. 确保 `netlify.toml` 中没有 `NPM_VERSION` 配置
 3. 在 Netlify Dashboard 中清除构建缓存
 4. 重新部署
+
+#### npm 安装失败 "ENOTEMPTY: directory not empty"
+
+**原因**: 缓存的 node_modules 与新安装冲突
+
+**解决方案**:
+
+1. 构建命令已包含 `rm -rf node_modules` 来清理旧文件
+2. 在 Netlify Dashboard 中清除构建缓存
+3. 重新部署
 
 #### 构建成功但运行时出错
 
