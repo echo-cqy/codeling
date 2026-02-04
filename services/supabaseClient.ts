@@ -10,9 +10,9 @@ export function getSupabaseClient(): SupabaseClient | null {
 
   if (!url || !anonKey) {
     console.error(
-      "Supabase 配置缺失！\n" +
-        "1. 本地开发：请检查 .env 文件中是否有 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。\n" +
-        "2. Netlify 部署：请确保在 Netlify 的 Supabase 扩展设置中选择了 'Vite' 框架，或手动在 Site Settings -> Environment variables 中添加这两个变量。",
+      "Supabase 配置错误: ",
+      { url: !!url, key: !!anonKey },
+      "\n请检查环境变量 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY 是否配置正确。",
     );
     cached = null;
     return cached;
