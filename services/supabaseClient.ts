@@ -9,15 +9,7 @@ export function getSupabaseClient(): SupabaseClient | null {
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey) {
-    console.error("Supabase 配置错误:", { url: !!url, key: !!anonKey });
-
-    // 如果发现了数据库连接串但没有 API URL，给出明确指引
-    if (!url && (import.meta.env as any).VITE_SUPABASE_DATABASE_URL) {
-      console.warn(
-        "提示：Netlify 提供了 VITE_SUPABASE_DATABASE_URL，但前端需要 VITE_SUPABASE_URL (API 地址)。请手动在 Netlify 后台添加该变量。",
-      );
-    }
-
+    console.error("Supabase 配置错误: 找不到有效的 URL 或 Anon Key。");
     cached = null;
     return cached;
   }
