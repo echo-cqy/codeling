@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import confetti from "canvas-confetti";
 import { storageService } from "./services/storageService";
-import { aiService } from "./services/aiService";
 import {
   Question,
   UserStats,
@@ -20,9 +19,10 @@ import AuthModal from "./components/AuthModal";
 import MigrationModal from "./components/MigrationModal";
 import { translations } from "./i18n";
 import { useAuth } from "./contexts/AuthContext";
-
-const DEFAULT_REACT_INITIAL = `import React from 'react';\n\nexport default function App() {\n  return (\n    <div className="p-10">\n      <h1 className="text-2xl font-bold text-pink-500">Hello React</h1>\n    </div>\n  );\n}`;
-const DEFAULT_VUE_INITIAL = `<script setup>\nimport { ref } from 'vue';\nconst msg = ref('Hello Vue');\n</script>\n\n<template>\n  <div class="p-10">\n    <h1 class="text-2xl font-bold text-pink-500">{{ msg }}</h1>\n  </div>\n</template>`;
+import { useQuestions } from "./hooks/useQuestions";
+import { useSync } from "./hooks/useSync";
+import { useSettings } from "./hooks/useSettings";
+import { useStats } from "./hooks/useStats";
 
 const PROVIDERS: { id: AIProvider; name: string }[] = [
   { id: "gemini", name: "Google Gemini" },
@@ -98,221 +98,102 @@ const FeedbackAnimation = ({
 function App() {
   const { user, loading: authLoading, signOut } = useAuth();
   const [lang, setLang] = useState<Language>(storageService.getLanguage());
-  const [questions, setQuestions] = useState<Question[]>(
-    storageService.getQuestions(),
-  );
-  const [activeCategory, setActiveCategory] = useState<string>("All");
-  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(
-    null,
-  );
+
   const [framework, setFramework] = useState<Framework>("react");
   const [view, setView] = useState<"editor" | "stats">("editor");
-  const [magicTopic, setMagicTopic] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [stats, setStats] = useState<UserStats>(storageService.getStats());
-  const [showSettings, setShowSettings] = useState(false);
-  const [showAuth, setShowAuth] = useState(false);
-  const [showMigration, setShowMigration] = useState(false);
-  const [migrationData, setMigrationData] = useState<ReturnType<
-    typeof storageService.exportLocalData
-  > | null>(null);
-  const [isMigrating, setIsMigrating] = useState(false);
-  const [showManualAdd, setShowManualAdd] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [showQuestionEdit, setShowQuestionEdit] = useState(false);
   const [selectedQuestionForEdit, setSelectedQuestionForEdit] =
     useState<Question | null>(null);
   const [feedback, setFeedback] = useState<{
     message: string;
     type: "success" | "error";
   } | null>(null);
-  const [testStatus, setTestStatus] = useState<
-    "idle" | "testing" | "success" | "failed"
-  >("idle");
 
-  const t = translations[lang] || translations["en"];
-  if (!t) {
-    return <div>Language error</div>;
-  }
+  const {
+    stats,
+    refreshStats,
+    handleDeleteAttempt,
+    handleClearListStats,
+    handleResetListStats,
+    handleSaveAttempt,
+  } = useStats((message, type) => setFeedback({ message, type }));
 
-  const categories = useMemo(() => {
-    const cats = new Set(questions.map((q) => q.category));
-    return ["All", ...Array.from(cats)].filter(Boolean);
-  }, [questions]);
+  const {
+    showSettings,
+    setShowSettings,
+    showAuth,
+    setShowAuth,
+    showManualAdd,
+    setShowManualAdd,
+    showImport,
+    setShowImport,
+    showQuestionEdit,
+    setShowQuestionEdit,
+    testStatus,
+    setTestStatus,
+    handleTestConnection: _handleTestConnection,
+  } = useSettings();
 
-  const filteredQuestions = useMemo(() => {
-    const term = magicTopic.toLowerCase();
-    return questions.filter((q) => {
-      const matchesSearch =
-        q.title.toLowerCase().includes(term) ||
-        q.tags.some((tag) => tag.toLowerCase().includes(term));
-      const matchesCategory =
-        activeCategory === "All" || q.category === activeCategory;
-      return matchesSearch && matchesCategory;
-    });
-  }, [questions, magicTopic, activeCategory]);
-
-  useEffect(() => {
-    if (!selectedQuestion && questions.length > 0) {
-      setSelectedQuestion(questions[0]);
-    }
-  }, [questions, selectedQuestion]);
-
-  useEffect(() => {
-    storageService.setLanguage(lang);
-  }, [lang]);
+  const {
+    questions,
+    setQuestions,
+    activeCategory,
+    setActiveCategory,
+    selectedQuestion,
+    setSelectedQuestion,
+    magicTopic,
+    setMagicTopic,
+    isGenerating,
+    manualTab,
+    setManualTab,
+    newQuestion,
+    setNewQuestion,
+    categories,
+    filteredQuestions,
+    refreshQuestions,
+    handleDeleteQuestion: _handleDeleteQuestion,
+    handleUpdateQuestion,
+    handleMagicGenerate: _handleMagicGenerate,
+    handleManualSave: _handleManualSave,
+  } = useQuestions(lang, (message, type) => setFeedback({ message, type }));
 
   const handleRefreshStats = useCallback(() => {
-    const s = storageService.getStats();
-    const q = storageService.getQuestions();
-    setStats(s);
-    setQuestions(q);
+    const s = refreshStats();
+    const q = refreshQuestions();
     return { s, q };
-  }, []);
+  }, [refreshStats, refreshQuestions]);
 
-  const handleDeleteAttempt = useCallback(
-    (id: string) => {
-      storageService.deleteAttempt(id);
-      handleRefreshStats();
-      setFeedback({ message: "DELETED ✨", type: "success" });
-    },
-    [handleRefreshStats],
+  const {
+    showMigration,
+    setShowMigration,
+    migrationData,
+    isMigrating,
+    handleSkipMigration,
+    handleImportMigration,
+  } = useSync(user, authLoading, handleRefreshStats, (message, type) =>
+    setFeedback({ message, type }),
   );
 
-  const handleEditQuestion = (question: Question) => {
-    setSelectedQuestionForEdit(question);
-    setShowQuestionEdit(true);
-  };
-
-  const handleUpdateQuestion = (
-    questionId: string,
-    updates: Partial<Pick<Question, "description" | "react" | "vue">>,
-  ) => {
-    const updatedQuestion = storageService.updateQuestionContent(
-      questionId,
-      updates,
-    );
-    if (updatedQuestion) {
-      setQuestions((prev) =>
-        prev.map((q) => (q.id === questionId ? updatedQuestion : q)),
-      );
-      setFeedback({ message: "QUESTION UPDATED ✨", type: "success" });
-    } else {
-      setFeedback({ message: "UPDATE FAILED ❌", type: "error" });
-    }
-  };
-
-  const handleClearListStats = (questionIds: string[]) => {
-    storageService.clearQuestionListStats(questionIds);
-    handleRefreshStats();
-    setFeedback({ message: "LIST STATS CLEARED ✨", type: "success" });
-  };
-
-  const handleResetListStats = (questionIds: string[]) => {
-    storageService.resetQuestionListStats(questionIds);
-    handleRefreshStats();
-    setFeedback({ message: "LIST STATS RESET ✨", type: "success" });
-  };
-  useEffect(() => {
-    if (authLoading) return;
-
-    const localSnapshot = storageService.exportLocalData();
-    storageService.setRemoteUserId(user?.id ?? null);
-
-    if (!user) return;
-
-    (async () => {
-      try {
-        const meta = await storageService.pullRemote();
-        handleRefreshStats();
-
-        const hasLocalProgress =
-          localSnapshot.stats.history.length > 0 ||
-          localSnapshot.drafts.length > 0;
-
-        if (!meta.hasAnyRemoteData && hasLocalProgress) {
-          setMigrationData(localSnapshot);
-          setShowMigration(true);
-        }
-      } catch (e) {
-        setFeedback({
-          message: e instanceof Error ? e.message : "Sync failed",
-          type: "error",
-        });
-      }
-    })();
-  }, [user?.id, authLoading, handleRefreshStats]);
+  const t = translations[lang] || translations["en"];
 
   const handleSave = (code: string, versionName?: string) => {
     if (!selectedQuestion) return;
-    storageService.saveAttempt({
-      id: Math.random().toString(36).substr(2, 9),
-      questionId: selectedQuestion.id,
-      framework,
-      code,
-      timestamp: Date.now(),
-      status: "passed",
-      name: versionName,
-    });
-    handleRefreshStats();
-    setFeedback({ message: "SAVED ✨", type: "success" });
+    handleSaveAttempt(selectedQuestion.id, framework, code, versionName);
   };
 
   const handleTestConnection = async () => {
-    // For Gemini, we don't check for an API key in stats since it uses process.env.API_KEY
-    if (stats.aiConfig?.provider !== "gemini" && !stats.aiConfig?.apiKey) {
-      setFeedback({
-        message: lang === "zh" ? "请填写 API Key" : "Fill API Key",
-        type: "error",
-      });
-      return;
-    }
-    setTestStatus("testing");
-    const result = await aiService.testConnection(stats.aiConfig!);
-    if (result) {
-      setTestStatus("success");
-      setFeedback({ message: "CONNECTED ✨", type: "success" });
-    } else {
-      setTestStatus("failed");
-      setFeedback({ message: t.testFailed, type: "error" });
-    }
-    setTimeout(() => setTestStatus("idle"), 3000);
+    await _handleTestConnection(
+      stats.aiConfig,
+      lang,
+      t.testFailed,
+      (message, type) => setFeedback({ message, type }),
+    );
   };
 
   const handleManualSave = () => {
-    if (!newQuestion.title || !newQuestion.description) {
-      setFeedback({
-        message: lang === "zh" ? "标题和描述必填" : "Title & Desc Required",
-        type: "error",
-      });
-      return;
+    if (_handleManualSave()) {
+      handleRefreshStats();
+      setShowManualAdd(false);
     }
-    const q: Question = {
-      id: Math.random().toString(36).substr(2, 9),
-      title: newQuestion.title!,
-      difficulty: newQuestion.difficulty!,
-      description: newQuestion.description!,
-      category: newQuestion.category || "General",
-      tags: newQuestion.tags || [],
-      react: newQuestion.react as any,
-      vue: newQuestion.vue as any,
-      createdAt: Date.now(),
-    };
-    storageService.addQuestion(q);
-    handleRefreshStats();
-    setSelectedQuestion(q);
-    setShowManualAdd(false);
-    setFeedback({ message: "CREATED ✨", type: "success" });
-
-    setNewQuestion({
-      title: "",
-      difficulty: Difficulty.EASY,
-      category: "",
-      description: "",
-      react: { initial: DEFAULT_REACT_INITIAL, solution: "" },
-      vue: { initial: DEFAULT_VUE_INITIAL, solution: "" },
-      tags: [],
-    });
   };
 
   const handleImportSuccess = (count: number) => {
@@ -328,81 +209,27 @@ function App() {
 
   const handleDeleteQuestion = useCallback(
     (id: string) => {
-      if (confirm(t.deleteConfirm)) {
-        storageService.deleteQuestion(id);
-        handleRefreshStats();
-        const updated = storageService.getQuestions();
-        setQuestions(updated);
-        if (selectedQuestion?.id === id) {
-          setSelectedQuestion(updated.length > 0 ? updated[0] : null);
-        }
-        setFeedback({ message: "DELETED 🗑️", type: "success" });
-      }
+      _handleDeleteQuestion(id, t.deleteConfirm);
+      handleRefreshStats();
     },
-    [selectedQuestion, t.deleteConfirm, handleRefreshStats],
+    [_handleDeleteQuestion, t.deleteConfirm, handleRefreshStats],
   );
 
   const handleMagicGenerate = async () => {
-    if (!magicTopic.trim()) return;
-    setIsGenerating(true);
-    try {
-      const q = await aiService.generateQuestion(magicTopic, lang);
-      storageService.addQuestion(q);
-      handleRefreshStats();
-      setSelectedQuestion(q);
-      setMagicTopic("");
-      setFeedback({ message: "GENERATED ✨", type: "success" });
-    } catch (error) {
-      console.error("Magic generation failed:", error);
-      setFeedback({
-        message: error instanceof Error ? error.message : t.magicFail,
-        type: "error",
-      });
-    }
-    setIsGenerating(false);
+    await _handleMagicGenerate(t.magicFail);
+    handleRefreshStats();
   };
 
-  const [manualTab, setManualTab] = useState<"info" | "react" | "vue">("info");
-  const [newQuestion, setNewQuestion] = useState<Partial<Question>>({
-    title: "",
-    difficulty: Difficulty.EASY,
-    category: "",
-    description: "",
-    react: { initial: DEFAULT_REACT_INITIAL, solution: "" },
-    vue: { initial: DEFAULT_VUE_INITIAL, solution: "" },
-    tags: [],
-  });
+  const handleEditQuestion = (question: Question) => {
+    setSelectedQuestionForEdit(question);
+    setShowQuestionEdit(true);
+  };
 
   const closeModalOnBackdrop = (e: React.MouseEvent, closeFn: () => void) => {
     if (e.target === e.currentTarget) {
       closeFn();
     }
   };
-
-  const handleSkipMigration = useCallback(() => {
-    setShowMigration(false);
-    setMigrationData(null);
-  }, []);
-
-  const handleImportMigration = useCallback(async () => {
-    if (!migrationData) return;
-    setIsMigrating(true);
-    try {
-      await storageService.pushLocalDataToRemote(migrationData);
-      await storageService.pullRemote();
-      handleRefreshStats();
-      setFeedback({ message: "SYNCED ✨", type: "success" });
-      setShowMigration(false);
-      setMigrationData(null);
-    } catch (e) {
-      setFeedback({
-        message: e instanceof Error ? e.message : "Import failed",
-        type: "error",
-      });
-    } finally {
-      setIsMigrating(false);
-    }
-  }, [migrationData, handleRefreshStats]);
 
   return (
     <div className="flex h-screen w-screen bg-[#fffafa] text-gray-800 p-4 gap-4 overflow-hidden fixed inset-0 font-['Quicksand']">
