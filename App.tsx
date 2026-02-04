@@ -16,7 +16,10 @@ import MarkdownViewer from "./components/MarkdownViewer";
 import ImportModal from "./components/ImportModal";
 import QuestionList from "./components/QuestionList";
 import QuestionEditModal from "./components/QuestionEditModal";
+import AuthModal from "./components/AuthModal";
+import MigrationModal from "./components/MigrationModal";
 import { translations } from "./i18n";
+import { useAuth } from "./contexts/AuthContext";
 
 const DEFAULT_REACT_INITIAL = `import React from 'react';\n\nexport default function App() {\n  return (\n    <div className="p-10">\n      <h1 className="text-2xl font-bold text-pink-500">Hello React</h1>\n    </div>\n  );\n}`;
 const DEFAULT_VUE_INITIAL = `<script setup>\nimport { ref } from 'vue';\nconst msg = ref('Hello Vue');\n</script>\n\n<template>\n  <div class="p-10">\n    <h1 class="text-2xl font-bold text-pink-500">{{ msg }}</h1>\n  </div>\n</template>`;
@@ -93,6 +96,7 @@ const FeedbackAnimation = ({
 };
 
 function App() {
+  const { user, loading: authLoading, signOut } = useAuth();
   const [lang, setLang] = useState<Language>(storageService.getLanguage());
   const [questions, setQuestions] = useState<Question[]>(
     storageService.getQuestions(),
@@ -107,6 +111,12 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [stats, setStats] = useState<UserStats>(storageService.getStats());
   const [showSettings, setShowSettings] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [showMigration, setShowMigration] = useState(false);
+  const [migrationData, setMigrationData] = useState<ReturnType<
+    typeof storageService.exportLocalData
+  > | null>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showQuestionEdit, setShowQuestionEdit] = useState(false);
@@ -203,6 +213,34 @@ function App() {
     handleRefreshStats();
     setFeedback({ message: "LIST STATS RESET ✨", type: "success" });
   };
+  useEffect(() => {
+    if (authLoading) return;
+
+    const localSnapshot = storageService.exportLocalData();
+    storageService.setRemoteUserId(user?.id ?? null);
+
+    if (!user) return;
+
+    (async () => {
+      try {
+        const meta = await storageService.pullRemote();
+        handleRefreshStats();
+
+        const hasLocalProgress =
+          localSnapshot.stats.history.length > 0 || localSnapshot.drafts.length > 0;
+
+        if (!meta.hasAnyRemoteData && hasLocalProgress) {
+          setMigrationData(localSnapshot);
+          setShowMigration(true);
+        }
+      } catch (e) {
+        setFeedback({
+          message: e instanceof Error ? e.message : "Sync failed",
+          type: "error",
+        });
+      }
+    })();
+  }, [user?.id, authLoading, handleRefreshStats]);
 
   const handleSave = (code: string, versionName?: string) => {
     if (!selectedQuestion) return;
@@ -340,6 +378,31 @@ function App() {
     }
   };
 
+  const handleSkipMigration = useCallback(() => {
+    setShowMigration(false);
+    setMigrationData(null);
+  }, []);
+
+  const handleImportMigration = useCallback(async () => {
+    if (!migrationData) return;
+    setIsMigrating(true);
+    try {
+      await storageService.pushLocalDataToRemote(migrationData);
+      await storageService.pullRemote();
+      handleRefreshStats();
+      setFeedback({ message: "SYNCED ✨", type: "success" });
+      setShowMigration(false);
+      setMigrationData(null);
+    } catch (e) {
+      setFeedback({
+        message: e instanceof Error ? e.message : "Import failed",
+        type: "error",
+      });
+    } finally {
+      setIsMigrating(false);
+    }
+  }, [migrationData, handleRefreshStats]);
+
   return (
     <div className="flex h-screen w-screen bg-[#fffafa] text-gray-800 p-4 gap-4 overflow-hidden fixed inset-0 font-['Quicksand']">
       {feedback && (
@@ -357,6 +420,16 @@ function App() {
         onFailure={handleImportFailure}
         lang={lang}
       />
+
+      {showAuth && <AuthModal lang={lang} onClose={() => setShowAuth(false)} />}
+      {showMigration && migrationData && (
+        <MigrationModal
+          lang={lang}
+          importing={isMigrating}
+          onSkip={handleSkipMigration}
+          onImport={handleImportMigration}
+        />
+      )}
 
       <aside className="w-96 bg-white border border-pink-50 flex flex-col shadow-xl rounded-[2.5rem] overflow-hidden shrink-0">
         <div className="p-6 border-b border-pink-50 flex items-center shrink-0">
@@ -482,6 +555,33 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                if (authLoading) return;
+                if (user) {
+                  signOut();
+                } else {
+                  setShowAuth(true);
+                }
+              }}
+              className={`h-12 px-5 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm border ${
+                user
+                  ? "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-100"
+                  : "bg-pink-50 text-pink-500 border-pink-100 hover:bg-pink-100"
+              } ${authLoading ? "opacity-60 cursor-not-allowed" : ""}`}
+            >
+              {authLoading
+                ? lang === "zh"
+                  ? "加载中"
+                  : "Loading"
+                : user
+                  ? lang === "zh"
+                    ? "退出"
+                    : "Sign Out"
+                  : lang === "zh"
+                    ? "登录"
+                    : "Sign In"}
+            </button>
             <button
               onClick={() => setLang((l) => (l === "en" ? "zh" : "en"))}
               className="w-12 h-12 border border-pink-100 text-pink-400 rounded-xl text-[10px] font-black hover:bg-pink-50 transition uppercase shadow-sm"
